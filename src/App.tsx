@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Calculator, 
   Settings, 
@@ -12,16 +12,20 @@ import {
   Menu,
   X,
   ShieldCheck,
-  Bell,
   FileText,
   HelpCircle,
   AlertTriangle,
-  History,
   Trash2,
-  Save,
   Clock,
-  Share2,
-  Copy
+  Users,
+  Check,
+  UserX,
+  Crown,
+  Info,
+  UserPlus,
+  Key,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -29,6 +33,28 @@ import { twMerge } from 'tailwind-merge';
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+import { User, BeamInput, BeamResult, PillarInput, SlabInput, SlabResult } from './types';
+
+// --- API Helper ---
+const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
+  const token = localStorage.getItem('viga_pro_token');
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+  const response = await fetch(endpoint, { ...options, headers });
+  if (!response.ok) {
+    if (response.status === 401) {
+      localStorage.removeItem('viga_pro_token');
+      window.location.reload();
+    }
+    const error = await response.json();
+    throw new Error(error.error || 'API Error');
+  }
+  return response.json();
+};
 
 // --- 3D Reinforcement Visualization ---
 const Reinforcement3D = ({ type, width, height, length = 300, bars, negativeBars, stirrups, backgroundColor = '#09090b' }: any) => {
@@ -451,25 +477,6 @@ function selectSlabBars(requiredAs: number, preferredPhi?: number) {
 }
 
 // --- Types ---
-import { User, BeamInput, BeamResult } from './types';
-
-// --- Auth Context ---
-interface AuthContextType {
-  user: User | null;
-  token: string | null;
-  login: (email: string, token: string, userData: User) => void;
-  logout: () => void;
-  isTrialExpired: boolean;
-}
-
-const AuthContext = createContext<AuthContextType | null>(null);
-
-const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within AuthProvider');
-  return context;
-};
-
 const VizBgPicker = ({ value, onChange }: { value: string, onChange: (val: string) => void }) => {
   const presets = [
     { name: 'Dark', color: '#09090b' },
@@ -947,27 +954,156 @@ const SlabViz = ({ input, result }: { input: any, result: any }) => {
   );
 };
 
+// --- Trial Expired View ---
+const TrialExpiredView = ({ user, onRequestAccess }: { user: User, onRequestAccess: () => void }) => {
+  return (
+    <div className="min-h-[80vh] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-8 shadow-2xl text-center"
+      >
+        <div className="w-20 h-20 bg-amber-500/10 rounded-full flex items-center justify-center mx-auto">
+          <Clock className="w-10 h-10 text-amber-500" />
+        </div>
+        
+        <div className="space-y-2">
+          <h2 className="text-3xl font-black text-white tracking-tighter">Trial Expirado</h2>
+          <p className="text-zinc-400">Seu período de teste de 7 dias chegou ao fim. Para continuar utilizando o VigaPro, solicite a liberação do seu acesso.</p>
+        </div>
+
+        <div className="bg-zinc-800/50 rounded-2xl p-6 border border-zinc-800 space-y-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-zinc-500">Status do Acesso:</span>
+            <span className="text-amber-500 font-bold uppercase tracking-widest text-[10px]">Bloqueado</span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-zinc-500">Data de Início:</span>
+            <span className="text-white font-mono">{new Date(user.trial_start).toLocaleDateString()}</span>
+          </div>
+        </div>
+
+        {user.request_pending ? (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-xl flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+            <p className="text-sm text-emerald-200 text-left">Sua solicitação já foi enviada e está aguardando análise do administrador.</p>
+          </div>
+        ) : (
+          <Button onClick={onRequestAccess} className="w-full bg-amber-600 hover:bg-amber-500">
+            Solicitar Liberação de Acesso
+          </Button>
+        )}
+
+        <div className="pt-4">
+          <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Suporte: patricioaug@gmail.com</p>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+// --- Admin View ---
+const AdminView = ({ onBack, onGrant, onRevoke, users }: { onBack: () => void, onGrant: (id: string) => void, onRevoke: (id: string) => void, users: User[] }) => {
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-2 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-colors">
+            <ChevronRight className="w-5 h-5 rotate-180" />
+          </button>
+          <div>
+            <h2 className="text-2xl font-black text-white tracking-tighter">Painel de Controle</h2>
+            <p className="text-zinc-500 text-sm">Gerenciamento de usuários e acessos</p>
+          </div>
+        </div>
+        <div className="bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 rounded-xl flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-emerald-500" />
+          <span className="text-xs font-bold text-emerald-500 uppercase tracking-widest">Administrador</span>
+        </div>
+      </div>
+
+      <div className="grid gap-4">
+        {users.length === 0 ? (
+          <div className="h-64 flex flex-col items-center justify-center text-zinc-500 space-y-4 bg-zinc-900/30 border border-dashed border-zinc-800 rounded-2xl">
+            <Users className="w-12 h-12 opacity-20" />
+            <p>Nenhum usuário cadastrado no sistema.</p>
+          </div>
+        ) : (
+          users.map((u) => {
+            const isExpired = u.trial_expired;
+            
+            return (
+              <motion.div 
+                key={u.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6"
+              >
+                <div className="flex items-center gap-4 w-full md:w-auto">
+                  <div className={cn(
+                    "w-12 h-12 rounded-xl flex items-center justify-center",
+                    u.access_granted ? "bg-emerald-500/10" : "bg-zinc-800"
+                  )}>
+                    <UserIcon className={cn("w-6 h-6", u.access_granted ? "text-emerald-500" : "text-zinc-500")} />
+                  </div>
+                  <div>
+                    <p className="text-white font-bold">{u.email}</p>
+                    <div className="flex items-center gap-3 mt-1">
+                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Trial: {new Date(u.trial_start).toLocaleDateString()}</span>
+                      {isExpired && !u.access_granted && (
+                        <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-md font-bold uppercase tracking-widest">Expirado</span>
+                      )}
+                      {u.request_pending && (
+                        <span className="text-[10px] bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded-md font-bold uppercase tracking-widest animate-pulse">Solicitou Acesso</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                  {u.access_granted ? (
+                    <button 
+                      onClick={() => onRevoke(u.id.toString())}
+                      className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-red-500/20 transition-colors"
+                    >
+                      <UserX className="w-4 h-4" /> Revogar
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={() => onGrant(u.id.toString())}
+                      className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-emerald-500 transition-colors shadow-lg shadow-emerald-900/20"
+                    >
+                      <Check className="w-4 h-4" /> Liberar Acesso
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- Main App ---
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
-  const [serverTime, setServerTime] = useState<string | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-  const [view, setView] = useState<'menu' | 'calc' | 'pillar' | 'slab' | 'admin' | 'login' | 'register' | 'beam_report' | 'pillar_report' | 'slab_report' | 'forgot_password' | 'history'>('menu');
+  const [view, setView] = useState<string>('login');
   const [vizBgColor, setVizBgColor] = useState('#09090b');
-  const [resetStep, setResetStep] = useState<1 | 2>(1);
-  const [resetEmail, setResetEmail] = useState('');
   const [showReport, setShowReport] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
-  const [reports, setReports] = useState<any[]>([]);
-  const [loadingReports, setLoadingReports] = useState(false);
-  
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  };
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [serverTime, setServerTime] = useState<number>(Date.now());
+  const [adminUsers, setAdminUsers] = useState<User[]>([]);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [tempPassword, setTempPassword] = useState<string | null>(null);
 
   const [input, setInput] = useState<any>({
     lx: '400',
@@ -1004,209 +1140,173 @@ export default function App() {
   const [result, setResult] = useState<BeamResult | null>(null);
   const [pillarResult, setPillarResult] = useState<any>(null);
   const [slabResult, setSlabResult] = useState<any>(null);
-  const [adminUsers, setAdminUsers] = useState<any[]>([]);
-  const [adminNotifications, setAdminNotifications] = useState<any[]>([]);
-  const [isPublicView, setIsPublicView] = useState(false);
-  const [currentReportShareId, setCurrentReportShareId] = useState<string | null>(null);
+
+  const ADMIN_EMAIL = 'patricioaug@gmail.com';
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const shareId = urlParams.get('share');
-    if (shareId) {
-      fetchPublicReport(shareId);
-    }
+    const checkAuth = async () => {
+      const token = localStorage.getItem('viga_pro_token');
+      if (!token) {
+        setLoadingAuth(false);
+        return;
+      }
+      try {
+        const status = await fetchApi('/api/user/status');
+        setUser(status);
+        setServerTime(status.server_time);
+        if (status.role !== 'admin' && status.trial_expired && !status.access_granted) {
+          setView('trial_expired');
+        } else if (view === 'login') {
+          setView('menu');
+        }
+      } catch (err) {
+        console.error('Auth check failed:', err);
+        localStorage.removeItem('viga_pro_token');
+      } finally {
+        setLoadingAuth(false);
+      }
+    };
+    checkAuth();
   }, []);
 
-  const fetchPublicReport = async (shareId: string) => {
-    try {
-      const res = await fetch(`/api/public/reports/${shareId}`);
-      if (res.ok) {
-        const report = await res.json();
-        setIsPublicView(true);
-        if (report.type === 'beam') {
-          setInput(report.input_data);
-          setResult(report.result_data);
-          setView('beam_report');
-        } else if (report.type === 'pillar') {
-          setPillarInput(report.input_data);
-          setPillarResult(report.result_data);
-          setView('pillar_report');
-        } else if (report.type === 'slab') {
-          setSlabInput(report.input_data);
-          setSlabResult(report.result_data);
-          setView('slab_report');
-        }
-      } else {
-        showToast('Relatório público não encontrado ou expirado', 'error');
-      }
-    } catch (error) {
-      console.error('Error fetching public report:', error);
-    }
-  };
-
   useEffect(() => {
-    if (token) {
-      fetch('/api/me', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data) {
-          const { serverTime: st, ...userData } = data;
-          setUser(userData);
-          setServerTime(st);
-          if (view === 'login' || view === 'register') setView('menu');
-          fetchReports();
+    if (view === 'admin' && user?.role === 'admin') {
+      const fetchAdminUsers = async () => {
+        try {
+          const usersData = await fetchApi('/api/admin/users');
+          setAdminUsers(usersData);
+        } catch (err: any) {
+          showToast(err.message, 'error');
         }
-        else setToken(null);
-        setIsAuthReady(true);
-      });
-    } else {
-      setIsAuthReady(true);
-      if (!new URLSearchParams(window.location.search).get('share')) {
-        setView('login');
-      }
-    }
-  }, [token]);
-
-  useEffect(() => {
-    if (view === 'admin') {
+      };
       fetchAdminUsers();
-      fetchAdminNotifications();
     }
-  }, [view]);
+  }, [view, user]);
 
-  const HistoryView = () => {
-    return (
-      <motion.div 
-        key="history"
-        initial={{ opacity: 0, x: -20 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 20 }}
-        className="space-y-8"
-      >
-        <div className="flex items-center justify-between print:hidden">
-          <button onClick={() => setView('menu')} className="text-zinc-500 hover:text-white flex items-center gap-2 text-sm font-medium">
-            <X className="w-4 h-4" /> Voltar ao Menu
-          </button>
-          <h2 className="text-xl font-bold text-white flex items-center gap-3">
-            <History className="w-6 h-6 text-emerald-500" />
-            Histórico de Relatórios
-          </h2>
-        </div>
-
-        {loadingReports ? (
-          <div className="flex justify-center py-20">
-            <div className="w-10 h-10 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
-          </div>
-        ) : reports.length === 0 ? (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-12 text-center space-y-4">
-            <div className="w-16 h-16 bg-zinc-800 rounded-2xl flex items-center justify-center mx-auto mb-6">
-              <Clock className="w-8 h-8 text-zinc-600" />
-            </div>
-            <h3 className="text-xl font-bold text-white">Nenhum relatório salvo</h3>
-            <p className="text-zinc-500 max-w-sm mx-auto">Você ainda não salvou nenhum cálculo. Realize um dimensionamento e clique em "Salvar Relatório" para vê-lo aqui.</p>
-            <button onClick={() => setView('calc')} className="text-emerald-500 font-bold text-sm uppercase tracking-widest hover:underline">Iniciar Cálculo</button>
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {reports.map((report) => (
-              <div key={report.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 hover:border-zinc-700 transition-all group">
-                <div className="flex items-center gap-4 w-full md:w-auto">
-                  <div className={cn(
-                    "w-12 h-12 rounded-xl flex items-center justify-center shrink-0",
-                    report.type === 'beam' ? "bg-emerald-500/10 text-emerald-500" :
-                    report.type === 'pillar' ? "bg-blue-500/10 text-blue-500" :
-                    "bg-amber-500/10 text-amber-500"
-                  )}>
-                    {report.type === 'beam' ? <Calculator className="w-6 h-6" /> :
-                     report.type === 'pillar' ? <ShieldCheck className="w-6 h-6" /> :
-                     <Menu className="w-6 h-6" />}
-                  </div>
-                  <div>
-                    <h4 className="text-white font-bold">{report.title}</h4>
-                    <p className="text-xs text-zinc-500 uppercase tracking-widest font-bold mt-1">
-                      {new Date(report.created_at).toLocaleDateString()} às {new Date(report.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-                  <button 
-                    onClick={() => {
-                      if (report.type === 'beam') {
-                        setInput(report.input_data);
-                        setResult(report.result_data);
-                        setCurrentReportShareId(report.share_id);
-                        setView('beam_report');
-                      } else if (report.type === 'pillar') {
-                        setPillarInput(report.input_data);
-                        setPillarResult(report.result_data);
-                        setCurrentReportShareId(report.share_id);
-                        setView('pillar_report');
-                      } else if (report.type === 'slab') {
-                        setSlabInput(report.input_data);
-                        setSlabResult(report.result_data);
-                        setCurrentReportShareId(report.share_id);
-                        setView('slab_report');
-                      }
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-sm font-bold transition-all"
-                  >
-                    <FileText className="w-4 h-4" /> Abrir
-                  </button>
-                  <button 
-                    onClick={() => shareReport(report.share_id)}
-                    className="p-2 text-zinc-500 hover:text-emerald-500 transition-colors"
-                    title="Compartilhar Relatório"
-                  >
-                    <Share2 className="w-5 h-5" />
-                  </button>
-                  <button 
-                    onClick={() => {
-                      deleteReport(report.id);
-                    }}
-                    className="p-2 text-zinc-500 hover:text-red-500 transition-colors"
-                    title="Excluir Relatório"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </motion.div>
-    );
+  const login = async (email: string) => {
+    setLoadingAuth(true);
+    setAuthError(null);
+    try {
+      const { token, user: userData } = await fetchApi('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password: loginPassword }),
+      });
+      localStorage.setItem('viga_pro_token', token);
+      setUser(userData);
+      
+      const status = await fetchApi('/api/user/status');
+      setServerTime(status.server_time);
+      if (status.role !== 'admin' && status.trial_expired && !status.access_granted) {
+        setView('trial_expired');
+      } else {
+        setView('menu');
+      }
+      showToast(`Bem-vindo, ${email}!`);
+    } catch (err: any) {
+      setAuthError(err.message);
+      showToast(err.message, 'error');
+    } finally {
+      setLoadingAuth(false);
+    }
   };
 
-  const login = (email: string, token: string, userData: User, st: string) => {
-    localStorage.setItem('token', token);
-    setToken(token);
-    setUser(userData);
-    setServerTime(st);
-    // Use a small timeout to ensure state updates are processed and view transition is smooth
-    setTimeout(() => {
+  const register = async (email: string) => {
+    setLoadingAuth(true);
+    setAuthError(null);
+    try {
+      const { token, user: userData } = await fetchApi('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ email, password: loginPassword }),
+      });
+      localStorage.setItem('viga_pro_token', token);
+      setUser(userData);
+      
+      const status = await fetchApi('/api/user/status');
+      setServerTime(status.server_time);
       setView('menu');
-      showToast('Você está logado!');
-    }, 50);
+      showToast(`Conta criada com sucesso!`);
+    } catch (err: any) {
+      setAuthError(err.message);
+      showToast(err.message, 'error');
+    } finally {
+      setLoadingAuth(false);
+    }
+  };
+
+  const forgotPassword = async (email: string) => {
+    setLoadingAuth(true);
+    setAuthError(null);
+    setTempPassword(null);
+    try {
+      const data = await fetchApi('/api/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      });
+      showToast(data.message);
+      if (data.tempPassword) {
+        setTempPassword(data.tempPassword);
+        setLoginPassword(''); // Clear password field for the new one
+      } else {
+        setAuthMode('login');
+      }
+    } catch (err: any) {
+      setAuthError(err.message);
+      showToast(err.message, 'error');
+    } finally {
+      setLoadingAuth(false);
+    }
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
+    localStorage.removeItem('viga_pro_token');
     setUser(null);
     setView('login');
-    showToast('Você foi deslogado!');
+    showToast('Sessão encerrada.');
   };
 
-  const isTrialExpired = () => {
-    if (!user || !serverTime) return false;
-    if (user.role === 'admin' || user.access_granted) return false;
-    const start = new Date(user.trial_start).getTime();
-    const now = new Date(serverTime).getTime();
-    const diff = (now - start) / (1000 * 60 * 60 * 24);
-    return diff > 7;
+  const requestAccess = async () => {
+    try {
+      await fetchApi('/api/user/request-access', { method: 'POST' });
+      setUser(prev => prev ? { ...prev, request_pending: true } : null);
+      showToast('Solicitação enviada com sucesso!');
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const grantAccess = async (userId: string) => {
+    try {
+      await fetchApi('/api/admin/grant-access', {
+        method: 'POST',
+        body: JSON.stringify({ userId }),
+      });
+      showToast('Acesso liberado!');
+      // Refresh users list
+      const usersData = await fetchApi('/api/admin/users');
+      setAdminUsers(usersData);
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const revokeAccess = async (userId: string) => {
+    try {
+      await fetchApi('/api/admin/revoke-access', {
+        method: 'POST',
+        body: JSON.stringify({ userId }),
+      });
+      showToast('Acesso revogado.');
+      // Refresh users list
+      const usersData = await fetchApi('/api/admin/users');
+      setAdminUsers(usersData);
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
   };
 
   const calculate = () => {
@@ -1367,251 +1467,46 @@ export default function App() {
     });
   };
 
-  const fetchAdminUsers = async () => {
-    const res = await fetch('/api/admin/users', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) setAdminUsers(await res.json());
-  };
-
-  const fetchAdminNotifications = async () => {
-    const res = await fetch('/api/admin/notifications', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) setAdminNotifications(await res.json());
-  };
-
-  const markNotificationRead = async (id: number) => {
-    await fetch('/api/admin/mark-notification-read', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` 
-      },
-      body: JSON.stringify({ id })
-    });
-    fetchAdminNotifications();
-  };
-
-  const requestAccess = async () => {
-    const subject = encodeURIComponent('Solicitação de Acesso - VigaPro');
-    const body = encodeURIComponent(`Olá Administrador,\n\nGostaria de solicitar a liberação de acesso total para minha conta no VigaPro.\n\nE-mail da conta: ${user?.email}\n\nObrigado!`);
-    window.location.href = `mailto:patricioaug@gmail.com?subject=${subject}&body=${body}`;
-    
-    // Still call the API to log the request in the admin panel
-    try {
-      await fetch('/api/request-access', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-    } catch (e) {
-      console.error("API log error:", e);
-    }
-  };
-
-  const toggleAccess = async (userId: number, access: boolean) => {
-    await fetch('/api/admin/toggle-access', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` 
-      },
-      body: JSON.stringify({ userId, access })
-    });
-    fetchAdminUsers();
-  };
-
-  const liberateAllPending = async () => {
-    const pendingUsers = adminUsers.filter((u: any) => !u.access_granted && u.role !== 'admin');
-    if (pendingUsers.length === 0) {
-      showToast('Nenhum usuário pendente.');
-      return;
-    }
-    
-    for (const u of pendingUsers) {
-      await fetch('/api/admin/toggle-access', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` 
-        },
-        body: JSON.stringify({ userId: u.id, access: true })
-      });
-    }
-    fetchAdminUsers();
-    showToast(`${pendingUsers.length} usuários liberados!`);
-  };
-
-  const fetchReports = async () => {
-    if (!token) return;
-    setLoadingReports(true);
-    try {
-      const res = await fetch('/api/reports', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setReports(data);
-      } else if (res.status === 401) {
-        logout();
-      }
-    } catch (error) {
-      console.error('Error fetching reports:', error);
-    } finally {
-      setLoadingReports(false);
-    }
-  };
-
-  const saveReport = async (type: string, title: string, inputData: any, resultData: any) => {
-    if (!token) return;
-    try {
-      const res = await fetch('/api/reports', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` 
-        },
-        body: JSON.stringify({ type, title, input_data: inputData, result_data: resultData })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        showToast('Relatório salvo com sucesso!');
-        setCurrentReportShareId(data.share_id);
-        fetchReports();
-      } else if (res.status === 401) {
-        showToast('Sessão expirada. Por favor, faça login novamente.', 'error');
-        logout();
-      } else {
-        const data = await res.json();
-        showToast(data.error || 'Erro ao salvar relatório', 'error');
-      }
-    } catch (error) {
-      showToast('Erro ao salvar relatório', 'error');
-    }
-  };
-
-  const deleteReport = async (id: number) => {
-    if (!token) return;
-    try {
-      const res = await fetch(`/api/reports/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        showToast('Relatório excluído!');
-        fetchReports();
-      } else if (res.status === 401) {
-        logout();
-      }
-    } catch (error) {
-      showToast('Erro ao excluir relatório', 'error');
-    }
-  };
-
-  const shareReport = (shareId: string) => {
-    if (!shareId) {
-      showToast('Este relatório ainda não pode ser compartilhado. Salve-o primeiro.', 'error');
-      return;
-    }
-    const shareUrl = `${window.location.origin}${window.location.pathname}?share=${shareId}`;
-    
-    if (navigator.share) {
-      navigator.share({
-        title: 'Relatório Estrutural - VigaPro',
-        text: 'Confira este dimensionamento estrutural realizado no VigaPro.',
-        url: shareUrl,
-      }).catch(console.error);
-    } else {
-      navigator.clipboard.writeText(shareUrl);
-      showToast('Link de compartilhamento copiado para a área de transferência!');
-    }
-  };
-
-  if (!isAuthReady) return (
-    <div className="min-h-screen bg-black flex items-center justify-center">
-      <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
-    </div>
-  );
-
-  if (isTrialExpired()) {
-    const daysRemaining = Math.max(0, Math.ceil(7 - (new Date(serverTime || '').getTime() - new Date(user?.trial_start || '').getTime()) / (1000 * 60 * 60 * 24)));
-    
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center p-6">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center space-y-6 shadow-2xl"
-        >
-          <div className="w-20 h-20 bg-amber-500/10 rounded-full flex items-center justify-center mx-auto">
-            <AlertCircle className="w-10 h-10 text-amber-500" />
-          </div>
-          <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-white">Período de Teste Expirado</h2>
-            <p className="text-zinc-400">Seu acesso gratuito de 7 dias terminou. Para continuar utilizando o Calculador de Vigas Pro, clique no botão abaixo para solicitar a liberação ao administrador.</p>
-          </div>
-          <div className="space-y-3">
-            <Button onClick={requestAccess} className="w-full bg-emerald-600 hover:bg-emerald-500">Solicitar Liberação de Acesso</Button>
-            <div className="bg-zinc-800/50 p-3 rounded-xl border border-zinc-700 flex items-center justify-center gap-3">
-              <Mail className="w-4 h-4 text-emerald-500" />
-              <span className="text-xs text-zinc-300 font-medium">patricioaug@gmail.com</span>
-            </div>
-          </div>
-          <Button onClick={logout} variant="outline" className="w-full">Sair da Conta</Button>
-        </motion.div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-black text-zinc-100 font-sans selection:bg-emerald-500/30 print:bg-white print:text-black print:overflow-visible">
-      {/* Navigation - Hidden on print and public view */}
-      {!isPublicView && (
-        <nav className="border-b border-zinc-800 bg-black/50 backdrop-blur-xl sticky top-0 z-50 print:hidden">
-          <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-            <button onClick={() => setView('menu')} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-              <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-900/20">
-                <Calculator className="w-6 h-6 text-white" />
-              </div>
-              <div className="text-left">
-                <h1 className="text-lg font-bold tracking-tight">VigaPro</h1>
-                <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Structural Engine</p>
-              </div>
-            </button>
-
-            <div className="flex items-center gap-4">
-              {user?.role === 'admin' && (
-                <button 
-                  onClick={() => setView(view === 'admin' ? 'menu' : 'admin')}
-                  className={cn(
-                    "flex items-center gap-2 px-4 py-2 rounded-lg transition-all",
-                    view === 'admin' ? "bg-emerald-500/10 text-emerald-500" : "text-zinc-400 hover:text-white"
-                  )}
-                >
-                  <ShieldCheck className="w-5 h-5" />
-                  <span className="text-sm font-medium hidden sm:inline">Admin</span>
-                </button>
-              )}
-              <button 
-                onClick={() => { setView('history'); fetchReports(); }} 
-                className={cn(
-                  "p-2 transition-colors",
-                  view === 'history' ? "text-emerald-500" : "text-zinc-400 hover:text-white"
-                )}
-                title="Histórico de Relatórios"
-              >
-                <History className="w-5 h-5" />
-              </button>
-              <button onClick={() => setShowHelp(true)} className="p-2 text-zinc-400 hover:text-white transition-colors">
-                <HelpCircle className="w-5 h-5" />
-              </button>
-              <button onClick={logout} className="p-2 text-zinc-400 hover:text-white transition-colors">
-                <LogOut className="w-5 h-5" />
-              </button>
+      {/* Navigation - Hidden on print */}
+      <nav className="border-b border-zinc-800 bg-black/50 backdrop-blur-xl sticky top-0 z-50 print:hidden">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+          <button onClick={() => setView('menu')} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+            <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-900/20">
+              <Calculator className="w-6 h-6 text-white" />
             </div>
+            <div className="text-left">
+              <h1 className="text-lg font-bold tracking-tight">VigaPro</h1>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Structural Engine</p>
+            </div>
+          </button>
+
+          <div className="flex items-center gap-4">
+            {user?.role === 'admin' && (
+              <button 
+                key="admin-btn"
+                onClick={() => setView('admin')} 
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all",
+                  view === 'admin' 
+                    ? "bg-emerald-600 text-white shadow-lg shadow-emerald-900/20" 
+                    : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white"
+                )}
+              >
+                <Crown className="w-4 h-4" />
+                Painel de Controle
+              </button>
+            )}
+            <button key="help-btn" onClick={() => setShowHelp(true)} className="p-2 text-zinc-400 hover:text-white transition-colors">
+              <HelpCircle className="w-5 h-5" />
+            </button>
+            <button key="logout-btn" onClick={logout} className="p-2 text-zinc-400 hover:text-white transition-colors">
+              <LogOut className="w-5 h-5" />
+            </button>
           </div>
-        </nav>
-      )}
+        </div>
+      </nav>
 
       <main className="max-w-7xl mx-auto px-4 py-8 print:p-0 print:max-w-none print:m-0 print:block print:static print:overflow-visible">
         {/* Toast Notification */}
@@ -1733,7 +1628,20 @@ export default function App() {
         </AnimatePresence>
 
         <AnimatePresence mode="wait">
-          {view === 'menu' && (
+          {loadingAuth ? (
+            <div key="loading-screen" className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
+              <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
+              <p className="text-zinc-500 font-medium animate-pulse">Autenticando...</p>
+            </div>
+          ) : view === 'trial_expired' && user ? (
+            <motion.div key="trial-view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <TrialExpiredView user={user} onRequestAccess={requestAccess} />
+            </motion.div>
+          ) : view === 'admin' ? (
+            <motion.div key="admin-view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <AdminView onBack={() => setView('menu')} onGrant={grantAccess} onRevoke={revokeAccess} users={adminUsers} />
+            </motion.div>
+          ) : view === 'menu' && (
             <motion.div 
               key="menu"
               initial={{ opacity: 0, y: 20 }}
@@ -1741,28 +1649,6 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="space-y-8"
             >
-              {user && !user.access_granted && user.role !== 'admin' && (
-                <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 text-amber-500" />
-                    <div>
-                      <p className="text-sm font-bold text-amber-500 uppercase tracking-widest">Versão Trial</p>
-                      <p className="text-xs text-amber-200/60">
-                        Restam <strong>{Math.max(0, Math.ceil(7 - (new Date(serverTime || '').getTime() - new Date(user.trial_start).getTime()) / (1000 * 60 * 60 * 24)))} dias</strong> de acesso gratuito.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-6">
-                    <div className="text-right">
-                      <p className="text-xs text-zinc-500 font-bold uppercase">Expira em</p>
-                      <p className="text-sm font-bold text-white">
-                        {Math.max(0, Math.ceil(7 - (new Date(serverTime || '').getTime() - new Date(user.trial_start).getTime()) / (1000 * 60 * 60 * 24)))} dias
-                      </p>
-                    </div>
-                    <Button onClick={requestAccess} size="sm" variant="secondary">Solicitar Liberação</Button>
-                  </div>
-                </div>
-              )}
               <div className="text-center space-y-4 max-w-2xl mx-auto mb-12">
                 <h2 className="text-4xl font-bold text-white tracking-tight">O que vamos calcular hoje?</h2>
                 <p className="text-zinc-400">Selecione um dos módulos abaixo para iniciar seu dimensionamento estrutural profissional.</p>
@@ -1776,67 +1662,51 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <button 
-                  onClick={() => { setView('calc'); setShowReport(false); }}
-                  className="group bg-zinc-900 border border-zinc-800 p-8 rounded-3xl text-left hover:border-emerald-500/50 transition-all hover:shadow-2xl hover:shadow-emerald-500/10"
-                >
-                  <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                    <Calculator className="w-8 h-8 text-emerald-500" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">Vigas de Concreto</h3>
-                  <p className="text-zinc-500 text-sm mb-6 leading-relaxed">Dimensionamento de armadura longitudinal para vigas retangulares sob flexão simples (NBR 6118).</p>
-                  <div className="flex items-center gap-2 text-emerald-500 font-bold text-xs uppercase tracking-widest">
-                    Acessar Módulo <ChevronRight className="w-4 h-4" />
-                  </div>
-                </button>
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <button 
+                    onClick={() => { setView('calc'); setShowReport(false); }}
+                    className="group bg-zinc-900 border border-zinc-800 p-8 rounded-3xl text-left hover:border-emerald-500/50 transition-all hover:shadow-2xl hover:shadow-emerald-500/10"
+                  >
+                    <div className="w-14 h-14 bg-emerald-500/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                      <Calculator className="w-8 h-8 text-emerald-500" />
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">Vigas de Concreto</h3>
+                    <p className="text-zinc-500 text-sm mb-6 leading-relaxed">Dimensionamento de armadura longitudinal para vigas retangulares sob flexão simples (NBR 6118).</p>
+                    <div className="flex items-center gap-2 text-emerald-500 font-bold text-xs uppercase tracking-widest">
+                      Acessar Módulo <ChevronRight className="w-4 h-4" />
+                    </div>
+                  </button>
 
-                <button 
-                  onClick={() => { setView('pillar'); setShowReport(false); }}
-                  className="group bg-zinc-900 border border-zinc-800 p-8 rounded-3xl text-left hover:border-emerald-500/50 transition-all hover:shadow-2xl hover:shadow-emerald-500/10"
-                >
-                  <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                    <ShieldCheck className="w-8 h-8 text-blue-500" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">Pilares</h3>
-                  <p className="text-zinc-500 text-sm mb-6 leading-relaxed">Dimensionamento de pilares sob flexão composta e verificação de esbeltez.</p>
-                  <div className="flex items-center gap-2 text-blue-500 font-bold text-xs uppercase tracking-widest">
-                    Acessar Módulo <ChevronRight className="w-4 h-4" />
-                  </div>
-                </button>
+                  <button 
+                    onClick={() => { setView('pillar'); setShowReport(false); }}
+                    className="group bg-zinc-900 border border-zinc-800 p-8 rounded-3xl text-left hover:border-emerald-500/50 transition-all hover:shadow-2xl hover:shadow-emerald-500/10"
+                  >
+                    <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                      <ShieldCheck className="w-8 h-8 text-blue-500" />
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">Pilares</h3>
+                    <p className="text-zinc-500 text-sm mb-6 leading-relaxed">Dimensionamento de pilares sob flexão composta e verificação de esbeltez.</p>
+                    <div className="flex items-center gap-2 text-blue-500 font-bold text-xs uppercase tracking-widest">
+                      Acessar Módulo <ChevronRight className="w-4 h-4" />
+                    </div>
+                  </button>
 
-                <button 
-                  onClick={() => { setView('slab'); setShowReport(false); }}
-                  className="group bg-zinc-900 border border-zinc-800 p-8 rounded-3xl text-left hover:border-emerald-500/50 transition-all hover:shadow-2xl hover:shadow-emerald-500/10"
-                >
-                  <div className="w-14 h-14 bg-amber-500/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                    <Menu className="w-8 h-8 text-amber-500" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">Lajes</h3>
-                  <p className="text-zinc-500 text-sm mb-6 leading-relaxed">Cálculo de lajes maciças.</p>
-                  <div className="flex items-center gap-2 text-amber-500 font-bold text-xs uppercase tracking-widest">
-                    Acessar Módulo <ChevronRight className="w-4 h-4" />
-                  </div>
-                </button>
-
-                <button 
-                  onClick={() => { setView('history'); fetchReports(); }}
-                  className="group bg-zinc-900 border border-zinc-800 p-8 rounded-3xl text-left hover:border-emerald-500/50 transition-all hover:shadow-2xl hover:shadow-emerald-500/10"
-                >
-                  <div className="w-14 h-14 bg-zinc-500/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                    <History className="w-8 h-8 text-zinc-400" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">Histórico</h3>
-                  <p className="text-zinc-500 text-sm mb-6 leading-relaxed">Acesse seus relatórios salvos e gerencie seu histórico de dimensionamentos.</p>
-                  <div className="flex items-center gap-2 text-zinc-400 font-bold text-xs uppercase tracking-widest">
-                    Ver Histórico <ChevronRight className="w-4 h-4" />
-                  </div>
-                </button>
-              </div>
+                  <button 
+                    onClick={() => { setView('slab'); setShowReport(false); }}
+                    className="group bg-zinc-900 border border-zinc-800 p-8 rounded-3xl text-left hover:border-emerald-500/50 transition-all hover:shadow-2xl hover:shadow-emerald-500/10"
+                  >
+                    <div className="w-14 h-14 bg-amber-500/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                      <Menu className="w-8 h-8 text-amber-500" />
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">Lajes</h3>
+                    <p className="text-zinc-500 text-sm mb-6 leading-relaxed">Cálculo de lajes maciças.</p>
+                    <div className="flex items-center gap-2 text-amber-500 font-bold text-xs uppercase tracking-widest">
+                      Acessar Módulo <ChevronRight className="w-4 h-4" />
+                    </div>
+                  </button>
+                </div>
             </motion.div>
           )}
-
-          {view === 'history' && <HistoryView />}
 
           {view === 'pillar' && (
             <motion.div 
@@ -2234,149 +2104,6 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'admin' && (
-            <motion.div 
-              key="admin"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-6"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-white">Painel de Controle</h2>
-                <div className="flex gap-3">
-                  <Button onClick={fetchAdminNotifications} variant="outline" size="sm">
-                    <Bell className="w-4 h-4 mr-2" />
-                    {adminNotifications.filter(n => !n.read).length} Novas
-                  </Button>
-                  <Button onClick={fetchAdminUsers} variant="secondary" size="sm">Atualizar Lista</Button>
-                </div>
-              </div>
-
-              <div className="grid lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 space-y-6">
-                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
-                    <div className="px-6 py-4 border-b border-zinc-800 flex justify-between items-center">
-                      <h3 className="font-bold text-white">Usuários Registrados</h3>
-                      <button 
-                        onClick={liberateAllPending}
-                        className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:underline"
-                      >
-                        Liberar Todos Pendentes
-                      </button>
-                    </div>
-                    <table className="w-full text-left">
-                      <thead className="bg-zinc-800/50 border-b border-zinc-800">
-                        <tr>
-                          <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Usuário</th>
-                          <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Data Cadastro</th>
-                          <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Status</th>
-                          <th className="px-6 py-4 text-xs font-bold text-zinc-500 uppercase tracking-widest">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-800">
-                        {adminUsers.map((u: any) => (
-                          <tr key={u.id} className="hover:bg-zinc-800/30 transition-colors">
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-xs font-bold text-zinc-400">
-                                  {u.email[0].toUpperCase()}
-                                </div>
-                                <span className="text-sm font-medium text-white">{u.email}</span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-sm text-zinc-400">
-                              {new Date(u.trial_start).toLocaleDateString()}
-                            </td>
-                            <td className="px-6 py-4">
-                              {u.access_granted ? (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                                  Liberado
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                                  Trial / Pendente
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              {u.role !== 'admin' && (
-                                <button 
-                                  onClick={() => toggleAccess(u.id, !u.access_granted)}
-                                  className={cn(
-                                    "text-xs font-bold uppercase tracking-widest hover:underline",
-                                    u.access_granted ? "text-red-500" : "text-emerald-500"
-                                  )}
-                                >
-                                  {u.access_granted ? 'Bloquear' : 'Liberar'}
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
-                    <div className="px-6 py-4 border-b border-zinc-800 flex justify-between items-center">
-                      <h3 className="font-bold text-white">Notificações</h3>
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Recentes</span>
-                    </div>
-                    <div className="divide-y divide-zinc-800 max-h-[600px] overflow-y-auto">
-                      {adminNotifications.length === 0 ? (
-                        <div className="p-8 text-center text-zinc-500 text-sm">Nenhuma notificação</div>
-                      ) : (
-                        adminNotifications.map((n: any) => {
-                          const userForNotification = adminUsers.find((u: any) => u.email.toLowerCase() === n.user_email.toLowerCase());
-                          const isAlreadyLiberated = userForNotification?.access_granted;
-                          
-                          return (
-                            <div key={n.id} className={cn("p-4 space-y-3 transition-colors", !n.read && "bg-emerald-500/5")}>
-                              <div className="flex justify-between items-start">
-                                <span className={cn(
-                                  "text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded",
-                                  n.type === 'registration' ? "bg-blue-500/10 text-blue-500" : "bg-amber-500/10 text-amber-500"
-                                )}>
-                                  {n.type === 'registration' ? 'Registro' : 'Acesso'}
-                                </span>
-                                <span className="text-[10px] text-zinc-500">{new Date(n.created_at).toLocaleDateString()}</span>
-                              </div>
-                              <p className="text-sm text-zinc-300">{n.message}</p>
-                              <div className="flex items-center gap-4">
-                                {!n.read && (
-                                  <button 
-                                    onClick={() => markNotificationRead(n.id)}
-                                    className="text-[10px] text-zinc-500 hover:text-white font-bold uppercase tracking-widest"
-                                  >
-                                    Marcar como lida
-                                  </button>
-                                )}
-                                {n.type === 'access_request' && !isAlreadyLiberated && userForNotification && (
-                                  <button 
-                                    onClick={() => {
-                                      toggleAccess(userForNotification.id, true);
-                                      markNotificationRead(n.id);
-                                    }}
-                                    className="text-[10px] text-emerald-500 hover:underline font-bold uppercase tracking-widest flex items-center gap-1"
-                                  >
-                                    <CheckCircle2 className="w-3 h-3" /> Liberar Acesso Agora
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
           {view === 'beam_report' && result && (
             <motion.div 
               key="beam_report"
@@ -2457,33 +2184,8 @@ export default function App() {
                     >
                       <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
                     </button>
-                    {!isPublicView && (
-                      <button 
-                        onClick={() => saveReport('beam', `Viga ${input.width}x${input.height} - ${new Date().toLocaleDateString()}`, input, result)} 
-                        className="text-emerald-600 hover:text-emerald-500 flex items-center gap-2 px-3 py-2 border border-emerald-100 rounded-lg bg-emerald-50/50 transition-colors"
-                      >
-                        <Save className="w-3 h-3" /> Salvar
-                      </button>
-                    )}
-                    {(currentReportShareId || isPublicView) && (
-                      <button 
-                        onClick={() => shareReport(currentReportShareId || new URLSearchParams(window.location.search).get('share') || '')} 
-                        className="text-blue-600 hover:text-blue-500 flex items-center gap-2 px-3 py-2 border border-blue-100 rounded-lg bg-blue-50/50 transition-colors"
-                      >
-                        <Share2 className="w-3 h-3" /> Compartilhar
-                      </button>
-                    )}
                   </div>
-                  {isPublicView ? (
-                    <button 
-                      onClick={() => window.location.href = window.location.origin}
-                      className="text-emerald-500 font-bold hover:underline"
-                    >
-                      Criar meu próprio cálculo no VigaPro
-                    </button>
-                  ) : (
-                    <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
-                  )}
+                  <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
                 </div>
               </div>
             </motion.div>
@@ -2569,33 +2271,8 @@ export default function App() {
                     >
                       <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
                     </button>
-                    {!isPublicView && (
-                      <button 
-                        onClick={() => saveReport('pillar', `Pilar ${pillarInput.width}x${pillarInput.height} - ${new Date().toLocaleDateString()}`, pillarInput, pillarResult)} 
-                        className="text-emerald-600 hover:text-emerald-500 flex items-center gap-2 px-3 py-2 border border-emerald-100 rounded-lg bg-emerald-50/50 transition-colors"
-                      >
-                        <Save className="w-3 h-3" /> Salvar
-                      </button>
-                    )}
-                    {(currentReportShareId || isPublicView) && (
-                      <button 
-                        onClick={() => shareReport(currentReportShareId || new URLSearchParams(window.location.search).get('share') || '')} 
-                        className="text-blue-600 hover:text-blue-500 flex items-center gap-2 px-3 py-2 border border-blue-100 rounded-lg bg-blue-50/50 transition-colors"
-                      >
-                        <Share2 className="w-3 h-3" /> Compartilhar
-                      </button>
-                    )}
                   </div>
-                  {isPublicView ? (
-                    <button 
-                      onClick={() => window.location.href = window.location.origin}
-                      className="text-emerald-500 font-bold hover:underline"
-                    >
-                      Criar meu próprio cálculo no VigaPro
-                    </button>
-                  ) : (
-                    <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
-                  )}
+                  <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
                 </div>
               </div>
             </motion.div>
@@ -2683,138 +2360,14 @@ export default function App() {
                     >
                       <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
                     </button>
-                    {!isPublicView && (
-                      <button 
-                        onClick={() => saveReport('slab', `Laje - ${new Date().toLocaleDateString()}`, slabInput, slabResult)} 
-                        className="text-emerald-600 hover:text-emerald-500 flex items-center gap-2 px-3 py-2 border border-emerald-100 rounded-lg bg-emerald-50/50 transition-colors"
-                      >
-                        <Save className="w-3 h-3" /> Salvar
-                      </button>
-                    )}
-                    {(currentReportShareId || isPublicView) && (
-                      <button 
-                        onClick={() => shareReport(currentReportShareId || new URLSearchParams(window.location.search).get('share') || '')} 
-                        className="text-blue-600 hover:text-blue-500 flex items-center gap-2 px-3 py-2 border border-blue-100 rounded-lg bg-blue-50/50 transition-colors"
-                      >
-                        <Share2 className="w-3 h-3" /> Compartilhar
-                      </button>
-                    )}
                   </div>
-                  {isPublicView ? (
-                    <button 
-                      onClick={() => window.location.href = window.location.origin}
-                      className="text-emerald-500 font-bold hover:underline"
-                    >
-                      Criar meu próprio cálculo no VigaPro
-                    </button>
-                  ) : (
-                    <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
-                  )}
+                  <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
                 </div>
               </div>
             </motion.div>
           )}
 
-          {view === 'forgot_password' && (
-            <div className="min-h-[80vh] flex items-center justify-center">
-              <motion.div 
-                key="forgot"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-8 space-y-8 shadow-2xl"
-              >
-                <div className="text-center space-y-2">
-                  <div className="w-16 h-16 bg-amber-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <Lock className="w-8 h-8 text-amber-500" />
-                  </div>
-                  <h2 className="text-2xl font-bold text-white">Recuperar Senha</h2>
-                  <p className="text-zinc-500 text-sm">
-                    {resetStep === 1 
-                      ? "Insira seu e-mail para receber o código de recuperação" 
-                      : "Insira o código enviado e sua nova senha"}
-                  </p>
-                </div>
-
-                {resetStep === 1 ? (
-                  <form className="space-y-4" onSubmit={async (e) => {
-                    e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
-                    const email = formData.get('email') as string;
-                    
-                    const res = await fetch('/api/forgot-password', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ email })
-                    });
-                    
-                    const data = await res.json();
-                    if (res.ok) {
-                      setResetEmail(email);
-                      setResetStep(2);
-                      showToast(data.message);
-                      // For demo, we might want to show the token if we can't check console
-                      if (data.debug_token) {
-                        console.log("DEBUG TOKEN:", data.debug_token);
-                      }
-                    } else {
-                      showToast(data.error, 'error');
-                    }
-                  }}>
-                    <Input label="E-mail de Cadastro" name="email" type="email" required />
-                    <Button type="submit" className="w-full">Enviar Código</Button>
-                  </form>
-                ) : (
-                  <form className="space-y-4" onSubmit={async (e) => {
-                    e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
-                    const token = formData.get('token') as string;
-                    const newPassword = formData.get('newPassword') as string;
-                    
-                    const res = await fetch('/api/reset-password', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ email: resetEmail, token, newPassword })
-                    });
-                    
-                    const data = await res.json();
-                    if (res.ok) {
-                      showToast(data.message);
-                      setView('login');
-                      setResetStep(1);
-                    } else {
-                      showToast(data.error, 'error');
-                    }
-                  }}>
-                    <Input label="Código de 6 dígitos" name="token" type="text" required maxLength={6} />
-                    <Input label="Nova Senha" name="newPassword" type="password" required />
-                    <Button type="submit" className="w-full">Alterar Senha</Button>
-                    <button 
-                      type="button"
-                      onClick={() => setResetStep(1)}
-                      className="w-full text-xs text-zinc-500 hover:text-white transition-colors"
-                    >
-                      Reenviar código
-                    </button>
-                  </form>
-                )}
-
-                <div className="text-center">
-                  <button 
-                    onClick={() => {
-                      setView('login');
-                      setResetStep(1);
-                    }}
-                    className="text-sm text-zinc-500 hover:text-emerald-500 transition-colors"
-                  >
-                    Voltar para o Login
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-
-          {(view === 'login' || view === 'register') && (
+          {(view === 'login') && (
             <div className="min-h-[80vh] flex items-center justify-center">
               <motion.div 
                 key="auth"
@@ -2827,60 +2380,190 @@ export default function App() {
                   <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-emerald-900/20">
                     <Calculator className="w-8 h-8 text-white" />
                   </div>
-                  <h2 className="text-2xl font-bold text-white">{view === 'login' ? 'Bem-vindo de volta' : 'Criar nova conta'}</h2>
-                  <p className="text-zinc-500 text-sm">Acesse a ferramenta profissional de cálculo estrutural</p>
+                  <h2 className="text-2xl font-bold text-white">
+                    {authMode === 'login' ? 'VigaPro Structural' : authMode === 'register' ? 'Criar Nova Conta' : 'Recuperar Senha'}
+                  </h2>
+                  <p className="text-zinc-500 text-sm">
+                    {authMode === 'login' ? 'Acesse a ferramenta profissional de cálculo estrutural' : authMode === 'register' ? 'Cadastre-se para iniciar seu trial de 7 dias' : 'Insira seu e-mail para receber uma nova senha'}
+                  </p>
                 </div>
 
-                <form className="space-y-4" onSubmit={async (e) => {
-                  e.preventDefault();
-                  const formData = new FormData(e.currentTarget);
-                  const email = formData.get('email') as string;
-                  const password = formData.get('password') as string;
-                  
-                  const endpoint = view === 'login' ? '/api/login' : '/api/register';
-                  const res = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
-                  });
-                  
-                  const data = await res.json();
-                  if (res.ok) {
-                    if (endpoint.includes('login')) {
-                      login(email, data.token, data.user, data.serverTime);
-                    } else {
-                      setView('login');
-                      showToast('Cadastro realizado! Faça login para continuar.');
-                    }
-                  } else {
-                    showToast(data.error || 'Erro ao processar requisição', 'error');
-                  }
-                }}>
-                  <Input label="E-mail" name="email" type="email" required />
-                  <div className="space-y-1">
-                    <Input label="Senha" name="password" type="password" required />
-                    {view === 'login' && (
-                      <div className="flex justify-end">
-                        <button 
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">E-mail</label>
+                    <div className="relative">
+                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                      <input 
+                        type="email" 
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        placeholder="seu@email.com"
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl py-3 pl-12 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  {authMode !== 'forgot' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between ml-1">
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                          Senha {authMode === 'register' && <span className="text-emerald-500/50 lowercase font-normal">(mín. 6 caracteres)</span>}
+                        </label>
+                        {authMode === 'login' && (
+                          <button 
+                            onClick={() => {
+                              setAuthMode('forgot');
+                              setShowPassword(false);
+                              setAuthError(null);
+                              setTempPassword(null);
+                              setLoginPassword('');
+                            }}
+                            className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors"
+                          >
+                            Esqueceu a senha?
+                          </button>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                        <input 
+                          type={showPassword ? "text" : "password"} 
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl py-3 pl-12 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                        />
+                        <button
                           type="button"
-                          onClick={() => setView('forgot_password')}
-                          className="text-xs text-zinc-500 hover:text-emerald-500 transition-colors"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
                         >
-                          Esqueceu a senha?
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
+                    </div>
+                  )}
+
+                  {authMode === 'forgot' && tempPassword && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-2"
+                    >
+                      <div className="flex items-center gap-2 text-emerald-500">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span className="text-xs font-bold uppercase tracking-wider">Senha Gerada</span>
+                      </div>
+                      <p className="text-sm text-white font-mono bg-zinc-800 p-2 rounded border border-zinc-700 text-center select-all">
+                        {tempPassword}
+                      </p>
+                      <p className="text-[10px] text-emerald-500/70 text-center">
+                        Anote sua nova senha e clique em "Faça login" para entrar.
+                      </p>
+                    </motion.div>
+                  )}
+
+                  {authError && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-3 text-red-500"
+                    >
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <p className="text-xs font-medium">{authError}</p>
+                    </motion.div>
+                  )}
+
+                  {authMode === 'login' && (
+                    <Button 
+                      onClick={() => login(loginEmail)} 
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
+                      disabled={loadingAuth || !loginEmail || !loginEmail.includes('@') || !loginPassword}
+                    >
+                      {loadingAuth ? 'Entrando...' : 'Entrar no Sistema'}
+                    </Button>
+                  )}
+
+                  {authMode === 'register' && (
+                    <Button 
+                      onClick={() => register(loginEmail)} 
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
+                      disabled={loadingAuth || !loginEmail || !loginEmail.includes('@') || !loginPassword || loginPassword.length < 6}
+                      type="button"
+                    >
+                      {loadingAuth ? 'Criando conta...' : 'Criar Minha Conta'}
+                    </Button>
+                  )}
+
+                  {authMode === 'forgot' && tempPassword && (
+                    <Button 
+                      onClick={() => {
+                        setAuthMode('login');
+                        setTempPassword(null);
+                      }}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
+                    >
+                      Fazer Login
+                    </Button>
+                  )}
+
+                  {authMode === 'forgot' && !tempPassword && (
+                    <Button 
+                      onClick={() => forgotPassword(loginEmail)} 
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
+                      disabled={loadingAuth || !loginEmail || !loginEmail.includes('@')}
+                    >
+                      {loadingAuth ? 'Enviando...' : 'Recuperar Senha'}
+                    </Button>
+                  )}
+                  
+                  <div className="relative py-2">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-zinc-800"></div>
+                    </div>
+                    <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold">
+                      <span className="bg-zinc-900 px-4 text-zinc-500">Ou</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    {authMode === 'login' ? (
+                      <button 
+                        onClick={() => {
+                          setAuthMode('register');
+                          setShowPassword(false);
+                          setAuthError(null);
+                          setTempPassword(null);
+                        }}
+                        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-sm font-medium"
+                      >
+                        <UserPlus className="w-4 h-4" /> Não tem uma conta? Cadastre-se
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => {
+                          setAuthMode('login');
+                          setShowPassword(false);
+                          setAuthError(null);
+                          setTempPassword(null);
+                        }}
+                        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-sm font-medium"
+                      >
+                        <Key className="w-4 h-4" /> Já tem uma conta? Faça login
+                      </button>
                     )}
                   </div>
-                  <Button type="submit" className="w-full">{view === 'login' ? 'Entrar' : 'Cadastrar'}</Button>
-                </form>
+
+                  <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-800 flex gap-3">
+                    <Info className="w-5 h-5 text-blue-500 shrink-0" />
+                    <p className="text-[11px] text-zinc-400 leading-relaxed">
+                      Novos usuários recebem 7 dias de trial gratuito. Após este período, o acesso deve ser liberado pelo administrador.
+                    </p>
+                  </div>
+                </div>
 
                 <div className="text-center">
-                  <button 
-                    onClick={() => setView(view === 'login' ? 'register' : 'login')}
-                    className="text-sm text-zinc-500 hover:text-emerald-500 transition-colors"
-                  >
-                    {view === 'login' ? 'Não tem uma conta? Cadastre-se' : 'Já tem uma conta? Entre agora'}
-                  </button>
+                  <p className="text-[10px] text-zinc-600 uppercase font-bold tracking-widest">VigaPro Structural Engine v1.0</p>
                 </div>
               </motion.div>
             </div>
@@ -2896,10 +2579,6 @@ export default function App() {
             <span className="text-xs font-bold uppercase tracking-widest">VigaPro Structural Engine v1.0</span>
           </div>
           <div className="flex items-center gap-6 text-xs font-medium text-zinc-500">
-            <div className="flex items-center gap-2 text-zinc-400">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Versão Trial (7 dias)
-            </div>
             <button 
               onClick={() => setShowSupport(true)}
               className="flex items-center gap-2 text-emerald-500 hover:text-emerald-400 transition-colors"
