@@ -13,7 +13,8 @@ const bcrypt = (bcryptModule as any).default || bcryptModule;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database('database.sqlite');
+const dbPath = process.env.VERCEL ? '/tmp/database.sqlite' : 'database.sqlite';
+const db = new Database(dbPath);
 const JWT_SECRET = 'super-secret-key-for-trial-app';
 
 // Initialize database
@@ -199,24 +200,33 @@ app.post('/api/admin/revoke-access', authenticate, isAdmin, (req, res) => {
   res.json({ success: true });
 });
 
-async function startServer() {
+// Static files and SPA fallback
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.join(process.cwd(), 'dist');
+  app.use(express.static(distPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
+
+async function startDevServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  } else if (!process.env.VERCEL) {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on http://localhost:${PORT}`);
     });
   }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
 }
 
-startServer();
+startDevServer();
+
+export default app;
