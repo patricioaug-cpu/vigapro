@@ -52,10 +52,20 @@ const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
       localStorage.removeItem('viga_pro_token');
       window.location.reload();
     }
-    const error = await response.json();
-    throw new Error(error.error || 'API Error');
+    let errorMessage = 'API Error';
+    try {
+      const error = await response.json();
+      errorMessage = error.error || errorMessage;
+    } catch (e) {
+      errorMessage = `Server Error: ${response.status} ${response.statusText}`;
+    }
+    throw new Error(errorMessage);
   }
-  return response.json();
+  try {
+    return await response.json();
+  } catch (e) {
+    throw new Error('Invalid JSON response from server');
+  }
 };
 
 // --- 3D Reinforcement Visualization ---

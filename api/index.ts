@@ -65,6 +65,16 @@ console.log('VERCEL:', process.env.VERCEL);
 app.use(cors());
 app.use(express.json());
 
+// Health Check
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    env: process.env.NODE_ENV, 
+    vercel: !!process.env.VERCEL,
+    time: new Date().toISOString()
+  });
+});
+
 // Auth Middleware
 const authenticate = (req: any, res: any, next: any) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -238,14 +248,33 @@ app.post('/api/admin/revoke-access', authenticate, isAdmin, async (req, res) => 
   }
 });
 
+// Catch-all for API routes
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
+});
+
+// Error handling middleware to ensure JSON responses
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error('Unhandled Error:', err);
+  res.status(500).json({ 
+    error: 'Internal Server Error', 
+    message: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
+// Initialize DB early
+try {
+  await getDb();
+  console.log('Database initialized.');
+} catch (err) {
+  console.error('Failed to initialize database:', err);
+}
+
 async function startServer() {
   try {
     console.log('Starting server initialization...');
     
-    // Initialize DB early
-    await getDb();
-    console.log('Database initialized.');
-
     if (process.env.NODE_ENV !== 'production') {
       console.log('Starting Vite in middleware mode...');
       const vite = await createViteServer({
