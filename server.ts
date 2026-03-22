@@ -83,7 +83,7 @@ app.post('/api/auth/register', (req, res) => {
     
     if (user) {
       if (user.password) {
-        return res.status(400).json({ error: 'Este e-mail já está cadastrado' });
+        return res.status(400).json({ error: 'Usuário já cadastrado' });
       } else {
         // Update existing user who was created without a password (from previous version)
         db.prepare('UPDATE users SET password = ? WHERE email = ?').run(hashedPassword, email);
@@ -119,26 +119,6 @@ app.post('/api/auth/login', (req, res) => {
 
   const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
   res.json({ token, user });
-});
-
-app.post('/api/auth/forgot-password', (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email é obrigatório' });
-
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
-  if (!user) {
-    return res.status(404).json({ error: 'Usuário não encontrado' });
-  }
-
-  // In a real app, send an email. Here we just reset to a default for demo.
-  const tempPassword = Math.random().toString(36).slice(-8);
-  const hashedPassword = bcrypt.hashSync(tempPassword, 10);
-  db.prepare('UPDATE users SET password = ? WHERE email = ?').run(hashedPassword, email);
-
-  res.json({ 
-    message: 'Uma nova senha temporária foi gerada. Em um sistema real, ela seria enviada por e-mail.',
-    tempPassword 
-  });
 });
 
 app.get('/api/user/status', authenticate, (req: any, res) => {

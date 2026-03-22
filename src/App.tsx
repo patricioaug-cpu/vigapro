@@ -25,7 +25,9 @@ import {
   UserPlus,
   Key,
   Eye,
-  EyeOff
+  EyeOff,
+  Share,
+  Link
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -1100,10 +1102,9 @@ export default function App() {
   const [adminUsers, setAdminUsers] = useState<User[]>([]);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [tempPassword, setTempPassword] = useState<string | null>(null);
 
   const [input, setInput] = useState<any>({
     lx: '400',
@@ -1188,6 +1189,42 @@ export default function App() {
     }
   }, [view, user]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shareType = params.get('share_type');
+    if (shareType && user) {
+      if (shareType === 'beam') {
+        const newInput = { ...input };
+        Object.keys(input).forEach(key => {
+          const val = params.get(`b_${key}`);
+          if (val) newInput[key] = val;
+        });
+        setInput(newInput);
+        setView('calc');
+        // Clear params from URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else if (shareType === 'pillar') {
+        const newInput = { ...pillarInput };
+        Object.keys(pillarInput).forEach(key => {
+          const val = params.get(`p_${key}`);
+          if (val) newInput[key] = val;
+        });
+        setPillarInput(newInput);
+        setView('pillar');
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else if (shareType === 'slab') {
+        const newInput = { ...slabInput };
+        Object.keys(slabInput).forEach(key => {
+          const val = params.get(`s_${key}`);
+          if (val) newInput[key] = val;
+        });
+        setSlabInput(newInput);
+        setView('slab');
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+  }, [user]);
+
   const login = async (email: string) => {
     setLoadingAuth(true);
     setAuthError(null);
@@ -1238,35 +1275,124 @@ export default function App() {
     }
   };
 
-  const forgotPassword = async (email: string) => {
-    setLoadingAuth(true);
-    setAuthError(null);
-    setTempPassword(null);
-    try {
-      const data = await fetchApi('/api/auth/forgot-password', {
-        method: 'POST',
-        body: JSON.stringify({ email }),
-      });
-      showToast(data.message);
-      if (data.tempPassword) {
-        setTempPassword(data.tempPassword);
-        setLoginPassword(''); // Clear password field for the new one
-      } else {
-        setAuthMode('login');
-      }
-    } catch (err: any) {
-      setAuthError(err.message);
-      showToast(err.message, 'error');
-    } finally {
-      setLoadingAuth(false);
-    }
-  };
-
   const logout = () => {
     localStorage.removeItem('viga_pro_token');
     setUser(null);
     setView('login');
     showToast('Sessão encerrada.');
+  };
+
+  const handleShareReport = async (type: 'beam' | 'pillar' | 'slab', inputData: any, resultData: any, mode: 'link' | 'text') => {
+    let text = '';
+    let shareUrl = window.location.origin + window.location.pathname;
+    const params = new URLSearchParams();
+    params.set('share_type', type);
+
+    const dateStr = new Date().toLocaleDateString();
+
+    if (type === 'beam') {
+      const fcd = (inputData.fck / 1.4).toFixed(2);
+      const fyd = (inputData.fyk / 1.15).toFixed(2);
+      const d = (inputData.height - inputData.cover).toFixed(2);
+      const Md = (inputData.load * Math.pow(inputData.lx / 100, 2) / 8 * 1.4).toFixed(2);
+      const xi = (resultData.x / Number(d)).toFixed(2);
+
+      text = `RELATÓRIO TÉCNICO - VIGAPRO\n`;
+      text += `Dimensionamento de Viga de Concreto Armado\n`;
+      text += `Data: ${dateStr}\n\n`;
+      text += `DADOS DE ENTRADA:\n`;
+      text += `- Vão (Lx): ${inputData.lx} cm\n`;
+      text += `- Carga (q): ${inputData.load} kN/m\n`;
+      text += `- Concreto (fck): ${inputData.fck} MPa\n`;
+      text += `- Aço (fyk): ${inputData.fyk} MPa\n`;
+      text += `- Seção: ${inputData.width} x ${inputData.height} cm\n`;
+      text += `- Cobrimento: ${inputData.cover} cm\n\n`;
+      text += `RESULTADOS:\n`;
+      text += `- Área de Aço Mín.: ${resultData.as_min} cm²\n`;
+      text += `- Área Adotada (As): ${resultData.as_final} cm²\n`;
+      text += `- Posição da L.N. (x): ${resultData.x} cm\n`;
+      text += `- Detalhamento: ${resultData.bars.count} Ø ${resultData.bars.diameter} mm\n\n`;
+      text += `MEMÓRIA DE CÁLCULO (NBR 6118):\n`;
+      text += `1. Resistências: fcd = ${fcd} MPa, fyd = ${fyd} MPa\n`;
+      text += `2. Geometria: d = ${d} cm\n`;
+      text += `3. Esforços: Md = ${Md} kNm\n`;
+      text += `4. Dimensionamento: x/d = ${xi}, As,calc = ${resultData.as_calc} cm²\n`;
+      text += `5. Final: As,final = ${resultData.as_final} cm²`;
+
+      Object.keys(inputData).forEach(key => params.set(`b_${key}`, inputData[key]));
+    } else if (type === 'pillar') {
+      const fcd = (inputData.fck / 1.4).toFixed(2);
+      const fyd = (inputData.fyk / 1.15).toFixed(2);
+      const Ac = (inputData.width * inputData.height).toFixed(2);
+      const Nd = (inputData.nd * 1.4).toFixed(2);
+
+      text = `RELATÓRIO TÉCNICO - VIGAPRO\n`;
+      text += `Dimensionamento de Pilar de Concreto Armado\n`;
+      text += `Data: ${dateStr}\n\n`;
+      text += `DADOS DE ENTRADA:\n`;
+      text += `- Seção: ${inputData.width} x ${inputData.height} cm\n`;
+      text += `- Concreto (fck): ${inputData.fck} MPa\n`;
+      text += `- Aço (fyk): ${inputData.fyk} MPa\n`;
+      text += `- Carga Axial (Nd): ${inputData.nd} kN\n`;
+      text += `- Momento Fletor (Md): ${inputData.md} kNm\n\n`;
+      text += `RESULTADOS:\n`;
+      text += `- Área de Aço Mín.: ${resultData.as_min} cm²\n`;
+      text += `- Área Adotada (As): ${resultData.as_final} cm²\n`;
+      text += `- Taxa de Armadura: ${(resultData.as_final / Number(Ac) * 100).toFixed(2)}%\n`;
+      text += `- Detalhamento: ${resultData.bars.count} Ø ${resultData.bars.diameter} mm\n\n`;
+      text += `MEMÓRIA DE CÁLCULO (NBR 6118):\n`;
+      text += `1. Resistências: fcd = ${fcd} MPa, fyd = ${fyd} MPa\n`;
+      text += `2. Esforços: Nd,d = ${Nd} kN\n`;
+      text += `3. Geometria: Ac = ${Ac} cm²\n`;
+      text += `4. Dimensionamento: As,final = ${resultData.as_final} cm²`;
+
+      Object.keys(inputData).forEach(key => params.set(`p_${key}`, inputData[key]));
+    } else if (type === 'slab') {
+      const fcd = (inputData.fck / 1.4).toFixed(2);
+      const fyd = (inputData.fyk / 1.15).toFixed(2);
+      const d = (inputData.thickness - 2.5).toFixed(2);
+      const Md = (inputData.load * Math.pow(inputData.lx, 2) / 8 * 1.4).toFixed(2);
+
+      text = `RELATÓRIO TÉCNICO - VIGAPRO\n`;
+      text += `Dimensionamento de Laje de Concreto Armado\n`;
+      text += `Data: ${dateStr}\n\n`;
+      text += `DADOS DE ENTRADA:\n`;
+      text += `- Dimensões (Lx / Ly): ${inputData.lx} x ${inputData.ly} m\n`;
+      text += `- Concreto (fck): ${inputData.fck} MPa\n`;
+      text += `- Aço (fyk): ${inputData.fyk} MPa\n`;
+      text += `- Carga Total: ${inputData.load} kN/m²\n`;
+      text += `- Espessura (h): ${inputData.thickness} cm\n\n`;
+      text += `RESULTADOS:\n`;
+      text += `- Área de Aço Mín.: ${resultData.as_min} cm²/m\n`;
+      text += `- Área Adotada (As): ${resultData.as_final} cm²/m\n`;
+      text += `- Flecha: ${resultData.deflection} mm (${resultData.deflection_status})\n`;
+      text += `- Detalhamento: Ø ${resultData.bars.diameter} c/ ${resultData.bars.spacing} cm\n\n`;
+      text += `MEMÓRIA DE CÁLCULO (NBR 6118):\n`;
+      text += `1. Resistências: fcd = ${fcd} MPa, fyd = ${fyd} MPa\n`;
+      text += `2. Geometria: h = ${inputData.thickness} cm, d = ${d} cm\n`;
+      text += `3. Esforços: Md = ${Md} kNm/m\n`;
+      text += `4. Verificação: Flecha = ${resultData.deflection} mm (Limite: ${resultData.deflection_limit} mm)`;
+
+      Object.keys(inputData).forEach(key => params.set(`s_${key}`, inputData[key]));
+    }
+
+    shareUrl += '?' + params.toString();
+
+    if (mode === 'link') {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast('Link do relatório copiado para a área de transferência!');
+      } catch (err) {
+        showToast('Erro ao copiar link.', 'error');
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('Relatório completo copiado para a área de transferência!');
+      } catch (err) {
+        showToast('Erro ao copiar texto.', 'error');
+      }
+    }
   };
 
   const requestAccess = async () => {
@@ -2184,6 +2310,18 @@ export default function App() {
                     >
                       <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
                     </button>
+                    <button 
+                      onClick={() => handleShareReport('beam', input, result, 'link')} 
+                      className="text-emerald-600 hover:text-emerald-700 flex items-center gap-2 px-3 py-2 border border-emerald-100 rounded-lg bg-emerald-50/50 transition-colors"
+                    >
+                      <Link className="w-3 h-3" /> Copiar Link
+                    </button>
+                    <button 
+                      onClick={() => handleShareReport('beam', input, result, 'text')} 
+                      className="text-emerald-600 hover:text-emerald-700 flex items-center gap-2 px-3 py-2 border border-emerald-100 rounded-lg bg-emerald-50/50 transition-colors"
+                    >
+                      <Share className="w-3 h-3" /> Copiar Texto
+                    </button>
                   </div>
                   <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
                 </div>
@@ -2270,6 +2408,18 @@ export default function App() {
                       className="text-zinc-600 hover:text-black flex items-center gap-2 px-3 py-2 border border-zinc-200 rounded-lg bg-zinc-50/50 transition-colors"
                     >
                       <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
+                    </button>
+                    <button 
+                      onClick={() => handleShareReport('pillar', pillarInput, pillarResult, 'link')} 
+                      className="text-blue-600 hover:text-blue-700 flex items-center gap-2 px-3 py-2 border border-blue-100 rounded-lg bg-blue-50/50 transition-colors"
+                    >
+                      <Link className="w-3 h-3" /> Copiar Link
+                    </button>
+                    <button 
+                      onClick={() => handleShareReport('pillar', pillarInput, pillarResult, 'text')} 
+                      className="text-blue-600 hover:text-blue-700 flex items-center gap-2 px-3 py-2 border border-blue-100 rounded-lg bg-blue-50/50 transition-colors"
+                    >
+                      <Share className="w-3 h-3" /> Copiar Texto
                     </button>
                   </div>
                   <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
@@ -2360,6 +2510,18 @@ export default function App() {
                     >
                       <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
                     </button>
+                    <button 
+                      onClick={() => handleShareReport('slab', slabInput, slabResult, 'link')} 
+                      className="text-amber-600 hover:text-amber-700 flex items-center gap-2 px-3 py-2 border border-amber-100 rounded-lg bg-amber-50/50 transition-colors"
+                    >
+                      <Link className="w-3 h-3" /> Copiar Link
+                    </button>
+                    <button 
+                      onClick={() => handleShareReport('slab', slabInput, slabResult, 'text')} 
+                      className="text-amber-600 hover:text-amber-700 flex items-center gap-2 px-3 py-2 border border-amber-100 rounded-lg bg-amber-50/50 transition-colors"
+                    >
+                      <Share className="w-3 h-3" /> Copiar Texto
+                    </button>
                   </div>
                   <span className="text-center md:text-right">VigaPro Structural Engine - patricioaug@gmail.com</span>
                 </div>
@@ -2403,65 +2565,30 @@ export default function App() {
                     </div>
                   </div>
 
-                  {authMode !== 'forgot' && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between ml-1">
-                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                          Senha {authMode === 'register' && <span className="text-emerald-500/50 lowercase font-normal">(mín. 6 caracteres)</span>}
-                        </label>
-                        {authMode === 'login' && (
-                          <button 
-                            onClick={() => {
-                              setAuthMode('forgot');
-                              setShowPassword(false);
-                              setAuthError(null);
-                              setTempPassword(null);
-                              setLoginPassword('');
-                            }}
-                            className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors"
-                          >
-                            Esqueceu a senha?
-                          </button>
-                        )}
-                      </div>
-                      <div className="relative">
-                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                        <input 
-                          type={showPassword ? "text" : "password"} 
-                          value={loginPassword}
-                          onChange={(e) => setLoginPassword(e.target.value)}
-                          placeholder="••••••••"
-                          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl py-3 pl-12 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                        >
-                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between ml-1">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                        Senha {authMode === 'register' && <span className="text-emerald-500/50 lowercase font-normal">(mín. 6 caracteres)</span>}
+                      </label>
                     </div>
-                  )}
-
-                  {authMode === 'forgot' && tempPassword && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-2"
-                    >
-                      <div className="flex items-center gap-2 text-emerald-500">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span className="text-xs font-bold uppercase tracking-wider">Senha Gerada</span>
-                      </div>
-                      <p className="text-sm text-white font-mono bg-zinc-800 p-2 rounded border border-zinc-700 text-center select-all">
-                        {tempPassword}
-                      </p>
-                      <p className="text-[10px] text-emerald-500/70 text-center">
-                        Anote sua nova senha e clique em "Faça login" para entrar.
-                      </p>
-                    </motion.div>
-                  )}
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                      <input 
+                        type={showPassword ? "text" : "password"} 
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl py-3 pl-12 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
 
                   {authError && (
                     <motion.div 
@@ -2494,28 +2621,6 @@ export default function App() {
                       {loadingAuth ? 'Criando conta...' : 'Criar Minha Conta'}
                     </Button>
                   )}
-
-                  {authMode === 'forgot' && tempPassword && (
-                    <Button 
-                      onClick={() => {
-                        setAuthMode('login');
-                        setTempPassword(null);
-                      }}
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
-                    >
-                      Fazer Login
-                    </Button>
-                  )}
-
-                  {authMode === 'forgot' && !tempPassword && (
-                    <Button 
-                      onClick={() => forgotPassword(loginEmail)} 
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
-                      disabled={loadingAuth || !loginEmail || !loginEmail.includes('@')}
-                    >
-                      {loadingAuth ? 'Enviando...' : 'Recuperar Senha'}
-                    </Button>
-                  )}
                   
                   <div className="relative py-2">
                     <div className="absolute inset-0 flex items-center">
@@ -2533,7 +2638,6 @@ export default function App() {
                           setAuthMode('register');
                           setShowPassword(false);
                           setAuthError(null);
-                          setTempPassword(null);
                         }}
                         className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-sm font-medium"
                       >
@@ -2545,7 +2649,6 @@ export default function App() {
                           setAuthMode('login');
                           setShowPassword(false);
                           setAuthError(null);
-                          setTempPassword(null);
                         }}
                         className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-sm font-medium"
                       >
