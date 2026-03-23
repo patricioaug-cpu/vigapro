@@ -1,5 +1,4 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { open, Database as SqliteDatabase } from 'sqlite';
@@ -7,7 +6,6 @@ import sqlite3 from 'sqlite3';
 import jwt from 'jsonwebtoken';
 import cors from 'cors';
 import * as bcryptModule from 'bcryptjs';
-import fs from 'fs';
 
 // Handle bcryptjs import variations in ESM
 const bcrypt = (bcryptModule as any).default || bcryptModule;
@@ -23,47 +21,64 @@ let db: SqliteDatabase | null = null;
 async function getDb() {
   if (db) return db;
   
-  const dbPath = process.env.VERCEL ? '/tmp/database.sqlite' : 'database.sqlite';
+  const dbPath = process.env.VERCEL ? '/tmp/database.sqlite' : path.join(process.cwd(), 'database.sqlite');
+  console.log(`Initializing database at: ${dbPath}`);
   
-  db = await open({
-    filename: dbPath,
-    driver: sqlite3.Database
-  });
+  try {
+    db = await open({
+      filename: dbPath,
+      driver: sqlite3.Database
+    });
 
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      role TEXT DEFAULT 'user',
-      trial_start DATETIME DEFAULT CURRENT_TIMESTAMP,
-      access_granted BOOLEAN DEFAULT 0,
-      request_pending BOOLEAN DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      password TEXT
-    )
-  `);
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        role TEXT DEFAULT 'user',
+        trial_start DATETIME DEFAULT CURRENT_TIMESTAMP,
+        access_granted BOOLEAN DEFAULT 0,
+        request_pending BOOLEAN DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        password TEXT
+      )
+    `);
 
-  // Ensure admin user exists
-  const adminEmail = 'patricioaug@gmail.com';
-  const adminPassword = bcrypt.hashSync('admin123', 10);
-  const existingAdmin = await db.get('SELECT * FROM users WHERE email = ?', adminEmail);
-  
-  if (!existingAdmin) {
-    await db.run('INSERT INTO users (email, role, access_granted, password) VALUES (?, ?, ?, ?)', adminEmail, 'admin', 1, adminPassword);
-  } else if (!existingAdmin.password) {
-    await db.run('UPDATE users SET password = ? WHERE email = ?', adminPassword, adminEmail);
+    // Ensure admin user exists
+    const adminEmail = 'patricioaug@gmail.com';
+    const adminPassword = bcrypt.hashSync('admin123', 10);
+    const existingAdmin = await db.get('SELECT * FROM users WHERE email = ?', adminEmail);
+    
+    if (!existingAdmin) {
+      await db.run('INSERT INTO users (email, role, access_granted, password) VALUES (?, ?, ?, ?)', adminEmail, 'admin', 1, adminPassword);
+    } else if (!existingAdmin.password) {
+      await db.run('UPDATE users SET password = ? WHERE email = ?', adminPassword, adminEmail);
+    }
+
+    return db;
+  } catch (err) {
+    console.error('Database initialization error:', err);
+    throw err;
   }
-
-  return db;
 }
 
 const app = express();
 
-console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('VERCEL:', process.env.VERCEL);
-
 app.use(cors());
 app.use(express.json());
+
+// Middleware to ensure DB is ready
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    try {
+      await getDb();
+      next();
+    } catch (err) {
+      res.status(500).json({ error: 'Database connection failed' });
+    }
+  } else {
+    next();
+  }
+});
 
 // Health Check
 app.get('/api/health', (req, res) => {
@@ -263,20 +278,14 @@ app.use((err: any, req: any, res: any, next: any) => {
   });
 });
 
-// Initialize DB early
-try {
-  await getDb();
-  console.log('Database initialized.');
-} catch (err) {
-  console.error('Failed to initialize database:', err);
-}
-
 async function startServer() {
   try {
     console.log('Starting server initialization...');
     
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
       console.log('Starting Vite in middleware mode...');
+      // Use dynamic import for Vite to avoid loading it in production
+      const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'spa',
