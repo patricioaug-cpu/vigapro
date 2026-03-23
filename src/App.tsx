@@ -55,7 +55,7 @@ const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
     let errorMessage = 'API Error';
     try {
       const error = await response.json();
-      errorMessage = error.error || errorMessage;
+      errorMessage = error.error || error.message || errorMessage;
     } catch (e) {
       errorMessage = `Server Error: ${response.status} ${response.statusText}`;
     }

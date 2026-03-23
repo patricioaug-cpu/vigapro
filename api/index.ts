@@ -2,13 +2,15 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { open, Database as SqliteDatabase } from 'sqlite';
-import sqlite3 from 'sqlite3';
+import * as sqlite3Module from 'sqlite3';
 import jwt from 'jsonwebtoken';
 import cors from 'cors';
 import * as bcryptModule from 'bcryptjs';
 
-// Handle bcryptjs import variations in ESM
+// Handle bcryptjs and sqlite3 import variations in ESM
 const bcrypt = (bcryptModule as any).default || bcryptModule;
+const sqlite3 = (sqlite3Module as any).default || sqlite3Module;
+const sqlite3Verbose = sqlite3.verbose ? sqlite3.verbose() : sqlite3;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,7 +29,7 @@ async function getDb() {
   try {
     db = await open({
       filename: dbPath,
-      driver: sqlite3.Database
+      driver: sqlite3Verbose.Database
     });
 
     await db.exec(`
@@ -66,21 +68,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Middleware to ensure DB is ready
-app.use(async (req, res, next) => {
-  if (req.path.startsWith('/api/')) {
-    try {
-      await getDb();
-      next();
-    } catch (err) {
-      res.status(500).json({ error: 'Database connection failed' });
-    }
-  } else {
-    next();
-  }
-});
-
-// Health Check
+// Health Check (Before DB middleware to avoid 500 on health check if DB fails)
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -88,6 +76,24 @@ app.get('/api/health', (req, res) => {
     vercel: !!process.env.VERCEL,
     time: new Date().toISOString()
   });
+});
+
+// Middleware to ensure DB is ready
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    try {
+      await getDb();
+      next();
+    } catch (err: any) {
+      console.error('DB Middleware Error:', err);
+      res.status(500).json({ 
+        error: 'Database connection failed',
+        message: err.message
+      });
+    }
+  } else {
+    next();
+  }
 });
 
 // Auth Middleware
@@ -105,7 +111,7 @@ const authenticate = (req: any, res: any, next: any) => {
 
 // Admin Middleware
 const isAdmin = (req: any, res: any, next: any) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   next();
 };
 
@@ -116,6 +122,9 @@ app.post('/api/auth/register', async (req, res) => {
 
   try {
     const database = await getDb();
+    if (!bcrypt || typeof bcrypt.hashSync !== 'function') {
+      throw new Error('Bcrypt library not properly loaded');
+    }
     const hashedPassword = bcrypt.hashSync(password, 10);
     let user = await database.get('SELECT * FROM users WHERE email = ?', email);
     
@@ -135,7 +144,7 @@ app.post('/api/auth/register', async (req, res) => {
     res.json({ token, user });
   } catch (err: any) {
     console.error('Registration error:', err);
-    res.status(500).json({ error: 'Erro ao registrar usuário' });
+    res.status(500).json({ error: 'Erro ao registrar usuário', message: err.message });
   }
 });
 
@@ -150,6 +159,10 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Usuário não encontrado ou senha não configurada' });
     }
 
+    if (!bcrypt || typeof bcrypt.compareSync !== 'function') {
+      throw new Error('Bcrypt library not properly loaded');
+    }
+
     const validPassword = bcrypt.compareSync(password, user.password);
     if (!validPassword) {
       return res.status(401).json({ error: 'Senha incorreta' });
@@ -157,9 +170,9 @@ app.post('/api/auth/login', async (req, res) => {
 
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user });
-  } catch (err) {
+  } catch (err: any) {
     console.error('Login error:', err);
-    res.status(500).json({ error: 'Erro ao fazer login' });
+    res.status(500).json({ error: 'Erro ao fazer login', message: err.message });
   }
 });
 
