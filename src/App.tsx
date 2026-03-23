@@ -36,37 +36,38 @@ import { twMerge } from 'tailwind-merge';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import { User, BeamInput, BeamResult, PillarInput, SlabInput, SlabResult } from './types';
+import { 
+  auth, 
+  db, 
+  googleProvider, 
+  handleFirestoreError, 
+  OperationType, 
+  Timestamp,
+  FirebaseUser
+} from './lib/firebase';
+import { 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail
+} from 'firebase/auth';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  collection, 
+  getDocs, 
+  query, 
+  where, 
+  onSnapshot,
+  serverTimestamp,
+  addDoc
+} from 'firebase/firestore';
 
-// --- API Helper ---
-const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
-  const token = localStorage.getItem('viga_pro_token');
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-    ...options.headers,
-  };
-  const response = await fetch(endpoint, { ...options, headers });
-  if (!response.ok) {
-    if (response.status === 401) {
-      localStorage.removeItem('viga_pro_token');
-      window.location.reload();
-    }
-    let errorMessage = 'API Error';
-    try {
-      const error = await response.json();
-      errorMessage = error.error || error.message || errorMessage;
-    } catch (e) {
-      errorMessage = `Server Error: ${response.status} ${response.statusText}`;
-    }
-    throw new Error(errorMessage);
-  }
-  try {
-    return await response.json();
-  } catch (e) {
-    throw new Error('Invalid JSON response from server');
-  }
-};
+import { User, BeamInput, BeamResult, PillarInput, SlabInput, SlabResult } from './types';
 
 // --- 3D Reinforcement Visualization ---
 const Reinforcement3D = ({ type, width, height, length = 300, bars, negativeBars, stirrups, backgroundColor = '#09090b' }: any) => {
@@ -443,6 +444,17 @@ const CalculationMemory = ({ type, input, result }: { type: 'beam' | 'pillar' | 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const formatDate = (date: any) => {
+  if (!date) return '';
+  if (typeof date === 'string') return new Date(date).toLocaleDateString();
+  if (date && typeof date === 'object' && 'toDate' in date) return date.toDate().toLocaleDateString();
+  try {
+    return new Date(date).toLocaleDateString();
+  } catch (e) {
+    return '';
+  }
+};
 
 const COMMON_BAR_DIAMETERS = [5, 6.3, 8, 10, 12.5, 16, 20];
 
@@ -984,16 +996,16 @@ const TrialExpiredView = ({ user, onRequestAccess }: { user: User, onRequestAcce
           <p className="text-zinc-400">Seu período de teste de 7 dias chegou ao fim. Para continuar utilizando o VigaPro, solicite a liberação do seu acesso.</p>
         </div>
 
-        <div className="bg-zinc-800/50 rounded-2xl p-6 border border-zinc-800 space-y-4">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-zinc-500">Status do Acesso:</span>
-            <span className="text-amber-500 font-bold uppercase tracking-widest text-[10px]">Bloqueado</span>
+          <div className="bg-zinc-800/50 rounded-2xl p-6 border border-zinc-800 space-y-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-zinc-500">Status do Acesso:</span>
+              <span className="text-amber-500 font-bold uppercase tracking-widest text-[10px]">Bloqueado</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-zinc-500">Data de Início:</span>
+              <span className="text-white font-mono">{formatDate(user.trial_start)}</span>
+            </div>
           </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-zinc-500">Data de Início:</span>
-            <span className="text-white font-mono">{new Date(user.trial_start).toLocaleDateString()}</span>
-          </div>
-        </div>
 
         {user.request_pending ? (
           <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-xl flex items-center gap-3">
@@ -1046,7 +1058,7 @@ const AdminView = ({ onBack, onGrant, onRevoke, users }: { onBack: () => void, o
             
             return (
               <motion.div 
-                key={u.id}
+                key={u.uid}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6"
@@ -1061,7 +1073,7 @@ const AdminView = ({ onBack, onGrant, onRevoke, users }: { onBack: () => void, o
                   <div>
                     <p className="text-white font-bold">{u.email}</p>
                     <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Trial: {new Date(u.trial_start).toLocaleDateString()}</span>
+                      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Trial: {formatDate(u.trial_start)}</span>
                       {isExpired && !u.access_granted && (
                         <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-md font-bold uppercase tracking-widest">Expirado</span>
                       )}
@@ -1075,14 +1087,14 @@ const AdminView = ({ onBack, onGrant, onRevoke, users }: { onBack: () => void, o
                 <div className="flex items-center gap-3 w-full md:w-auto">
                   {u.access_granted ? (
                     <button 
-                      onClick={() => onRevoke(u.id.toString())}
+                      onClick={() => onRevoke(u.uid)}
                       className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-red-500/20 transition-colors"
                     >
                       <UserX className="w-4 h-4" /> Revogar
                     </button>
                   ) : (
                     <button 
-                      onClick={() => onGrant(u.id.toString())}
+                      onClick={() => onGrant(u.uid)}
                       className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-emerald-500 transition-colors shadow-lg shadow-emerald-900/20"
                     >
                       <Check className="w-4 h-4" /> Liberar Acesso
@@ -1112,7 +1124,7 @@ export default function App() {
   const [adminUsers, setAdminUsers] = useState<User[]>([]);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -1160,42 +1172,80 @@ export default function App() {
   };
 
   useEffect(() => {
-    const checkAuth = async () => {
-      const token = localStorage.getItem('viga_pro_token');
-      if (!token) {
-        setLoadingAuth(false);
-        return;
-      }
-      try {
-        const status = await fetchApi('/api/user/status');
-        setUser(status);
-        setServerTime(status.server_time);
-        if (status.role !== 'admin' && status.trial_expired && !status.access_granted) {
-          setView('trial_expired');
-        } else if (view === 'login') {
-          setView('menu');
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as User;
+            const now = Date.now();
+            const trialStart = new Date(userData.trial_start).getTime();
+            const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
+            const trialExpired = now > (trialStart + sevenDaysInMs);
+            
+            const fullUser = {
+              ...userData,
+              uid: firebaseUser.uid,
+              trial_expired: trialExpired,
+              server_time: now
+            };
+            
+            setUser(fullUser);
+            if (fullUser.role !== 'admin' && trialExpired && !fullUser.access_granted) {
+              setView('trial_expired');
+            } else if (view === 'login') {
+              setView('menu');
+            }
+          } else {
+            // New user from Google or something
+            const newUser: User = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              role: firebaseUser.email === ADMIN_EMAIL ? 'admin' : 'user',
+              trial_start: serverTimestamp(),
+              access_granted: firebaseUser.email === ADMIN_EMAIL,
+              created_at: serverTimestamp()
+            };
+            await setDoc(userDocRef, newUser);
+            setUser(newUser);
+            setView('menu');
+          }
+        } catch (err) {
+          console.error('Auth check failed:', err);
+          showToast('Erro ao verificar autenticação', 'error');
         }
-      } catch (err) {
-        console.error('Auth check failed:', err);
-        localStorage.removeItem('viga_pro_token');
-      } finally {
-        setLoadingAuth(false);
+      } else {
+        setUser(null);
+        setView('login');
       }
-    };
-    checkAuth();
+      setLoadingAuth(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     if (view === 'admin' && user?.role === 'admin') {
-      const fetchAdminUsers = async () => {
-        try {
-          const usersData = await fetchApi('/api/admin/users');
-          setAdminUsers(usersData);
-        } catch (err: any) {
-          showToast(err.message, 'error');
-        }
-      };
-      fetchAdminUsers();
+      const q = query(collection(db, 'users'), where('role', '==', 'user'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const usersData = snapshot.docs.map(doc => {
+          const data = doc.data();
+          const now = Date.now();
+          const trialStart = new Date(data.trial_start).getTime();
+          const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
+          return {
+            ...data,
+            uid: doc.id,
+            trial_expired: now > (trialStart + sevenDaysInMs),
+            server_time: now
+          } as User;
+        });
+        setAdminUsers(usersData);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'users');
+      });
+      return () => unsubscribe();
     }
   }, [view, user]);
 
@@ -1239,24 +1289,11 @@ export default function App() {
     setLoadingAuth(true);
     setAuthError(null);
     try {
-      const { token, user: userData } = await fetchApi('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password: loginPassword }),
-      });
-      localStorage.setItem('viga_pro_token', token);
-      setUser(userData);
-      
-      const status = await fetchApi('/api/user/status');
-      setServerTime(status.server_time);
-      if (status.role !== 'admin' && status.trial_expired && !status.access_granted) {
-        setView('trial_expired');
-      } else {
-        setView('menu');
-      }
+      await signInWithEmailAndPassword(auth, email, loginPassword);
       showToast(`Bem-vindo, ${email}!`);
     } catch (err: any) {
       setAuthError(err.message);
-      showToast(err.message, 'error');
+      showToast('Erro ao fazer login. Verifique suas credenciais.', 'error');
     } finally {
       setLoadingAuth(false);
     }
@@ -1266,30 +1303,55 @@ export default function App() {
     setLoadingAuth(true);
     setAuthError(null);
     try {
-      const { token, user: userData } = await fetchApi('/api/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ email, password: loginPassword }),
-      });
-      localStorage.setItem('viga_pro_token', token);
-      setUser(userData);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, loginPassword);
+      const firebaseUser = userCredential.user;
       
-      const status = await fetchApi('/api/user/status');
-      setServerTime(status.server_time);
-      setView('menu');
+      const newUser: User = {
+        uid: firebaseUser.uid,
+        email: email,
+        role: email === ADMIN_EMAIL ? 'admin' : 'user',
+        trial_start: serverTimestamp(),
+        access_granted: email === ADMIN_EMAIL,
+        created_at: serverTimestamp()
+      };
+      
+      await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
       showToast(`Conta criada com sucesso!`);
     } catch (err: any) {
       setAuthError(err.message);
-      showToast(err.message, 'error');
+      showToast('Erro ao criar conta.', 'error');
     } finally {
       setLoadingAuth(false);
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('viga_pro_token');
-    setUser(null);
-    setView('login');
-    showToast('Sessão encerrada.');
+  const forgotPassword = async (email: string) => {
+    if (!email || !email.includes('@')) {
+      setAuthError('Por favor, insira um e-mail válido.');
+      return;
+    }
+    setLoadingAuth(true);
+    setAuthError(null);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      showToast('E-mail de recuperação enviado! Verifique sua caixa de entrada.');
+      setAuthMode('login');
+    } catch (err: any) {
+      setAuthError(err.message);
+      showToast('Erro ao enviar e-mail de recuperação.', 'error');
+    } finally {
+      setLoadingAuth(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setView('login');
+      showToast('Sessão encerrada.');
+    } catch (err) {
+      showToast('Erro ao encerrar sessão.', 'error');
+    }
   };
 
   const handleShareReport = async (type: 'beam' | 'pillar' | 'slab', inputData: any, resultData: any, mode: 'link' | 'text') => {
@@ -1406,42 +1468,38 @@ export default function App() {
   };
 
   const requestAccess = async () => {
+    if (!user?.uid) return;
     try {
-      await fetchApi('/api/user/request-access', { method: 'POST' });
+      await updateDoc(doc(db, 'users', user.uid), {
+        request_pending: true
+      });
       setUser(prev => prev ? { ...prev, request_pending: true } : null);
       showToast('Solicitação enviada com sucesso!');
     } catch (err: any) {
-      showToast(err.message, 'error');
+      showToast('Erro ao enviar solicitação.', 'error');
     }
   };
 
   const grantAccess = async (userId: string) => {
     try {
-      await fetchApi('/api/admin/grant-access', {
-        method: 'POST',
-        body: JSON.stringify({ userId }),
+      await updateDoc(doc(db, 'users', userId), {
+        access_granted: true,
+        request_pending: false
       });
       showToast('Acesso liberado!');
-      // Refresh users list
-      const usersData = await fetchApi('/api/admin/users');
-      setAdminUsers(usersData);
     } catch (err: any) {
-      showToast(err.message, 'error');
+      showToast('Erro ao liberar acesso.', 'error');
     }
   };
 
   const revokeAccess = async (userId: string) => {
     try {
-      await fetchApi('/api/admin/revoke-access', {
-        method: 'POST',
-        body: JSON.stringify({ userId }),
+      await updateDoc(doc(db, 'users', userId), {
+        access_granted: false
       });
       showToast('Acesso revogado.');
-      // Refresh users list
-      const usersData = await fetchApi('/api/admin/users');
-      setAdminUsers(usersData);
     } catch (err: any) {
-      showToast(err.message, 'error');
+      showToast('Erro ao revogar acesso.', 'error');
     }
   };
 
@@ -1479,14 +1537,27 @@ export default function App() {
     
     const bars = selectBars(As_final, input.preferredDiameter);
 
-    setResult({
+    const result = {
       as_calc: Number(As_calc.toFixed(2)),
       as_min: Number(As_min.toFixed(2)),
       as_final: Number(As_final.toFixed(2)),
       x: Number((xi * d).toFixed(2)),
       is_over_reinforced: false,
       bars
-    });
+    };
+
+    setResult(result);
+
+    // Save to Firestore
+    if (user?.uid) {
+      addDoc(collection(db, 'calculations'), {
+        userId: user.uid,
+        type: 'beam',
+        input_data: input,
+        result_data: result,
+        created_at: serverTimestamp()
+      }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'calculations'));
+    }
   };
 
   const calculatePillar = () => {
@@ -1542,12 +1613,25 @@ export default function App() {
       bars.count += 1;
     }
 
-    setPillarResult({
+    const result = {
       as_final: Number(As_final.toFixed(2)),
       as_min: Number(As_min.toFixed(2)),
       is_error: false,
       bars
-    });
+    };
+
+    setPillarResult(result);
+
+    // Save to Firestore
+    if (user?.uid) {
+      addDoc(collection(db, 'calculations'), {
+        userId: user.uid,
+        type: 'pillar',
+        input_data: pillarInput,
+        result_data: result,
+        created_at: serverTimestamp()
+      }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'calculations'));
+    }
   };
 
   const calculateSlab = () => {
@@ -1590,7 +1674,7 @@ export default function App() {
     const deflection = (60 * q * Math.pow(lx, 4) * 1000000) / (384 * Ecs * Math.pow(h, 3)); // mm
     const deflection_limit = (lx * 1000) / 250;
 
-    setSlabResult({
+    const result = {
       as_final: Number(As_final_pos.toFixed(2)),
       as_neg: Number(As_final_neg.toFixed(2)),
       as_min: Number(As_min.toFixed(2)),
@@ -1600,7 +1684,20 @@ export default function App() {
       is_error: false,
       bars: selectSlabBars(As_final_pos, slabInput.preferredDiameter),
       negativeBars
-    });
+    };
+
+    setSlabResult(result);
+
+    // Save to Firestore
+    if (user?.uid) {
+      addDoc(collection(db, 'calculations'), {
+        userId: user.uid,
+        type: 'slab',
+        input_data: slabInput,
+        result_data: result,
+        created_at: serverTimestamp()
+      }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'calculations'));
+    }
   };
 
   return (
@@ -2575,30 +2672,40 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between ml-1">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                        Senha {authMode === 'register' && <span className="text-emerald-500/50 lowercase font-normal">(mín. 6 caracteres)</span>}
-                      </label>
+                  {authMode !== 'forgot' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between ml-1">
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                          Senha {authMode === 'register' && <span className="text-emerald-500/50 lowercase font-normal">(mín. 6 caracteres)</span>}
+                        </label>
+                        {authMode === 'login' && (
+                          <button 
+                            onClick={() => setAuthMode('forgot')}
+                            className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest hover:text-emerald-400 transition-colors"
+                          >
+                            Esqueceu a senha?
+                          </button>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                        <input 
+                          type={showPassword ? "text" : "password"} 
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl py-3 pl-12 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
-                    <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                      <input 
-                        type={showPassword ? "text" : "password"} 
-                        value={loginPassword}
-                        onChange={(e) => setLoginPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl py-3 pl-12 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
+                  )}
 
                   {authError && (
                     <motion.div 
@@ -2631,6 +2738,16 @@ export default function App() {
                       {loadingAuth ? 'Criando conta...' : 'Criar Minha Conta'}
                     </Button>
                   )}
+
+                  {authMode === 'forgot' && (
+                    <Button 
+                      onClick={() => forgotPassword(loginEmail)} 
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
+                      disabled={loadingAuth || !loginEmail || !loginEmail.includes('@')}
+                    >
+                      {loadingAuth ? 'Enviando...' : 'Enviar E-mail de Recuperação'}
+                    </Button>
+                  )}
                   
                   <div className="relative py-2">
                     <div className="absolute inset-0 flex items-center">
@@ -2642,7 +2759,17 @@ export default function App() {
                   </div>
 
                   <div className="flex flex-col gap-3">
-                    {authMode === 'login' ? (
+                    {authMode === 'forgot' ? (
+                      <button 
+                        onClick={() => {
+                          setAuthMode('login');
+                          setAuthError(null);
+                        }}
+                        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-sm font-medium"
+                      >
+                        <Key className="w-4 h-4" /> Voltar para o Login
+                      </button>
+                    ) : authMode === 'login' ? (
                       <button 
                         onClick={() => {
                           setAuthMode('register');

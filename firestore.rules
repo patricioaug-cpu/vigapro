@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (from Firebase Auth)
+    // Fields:
+    //   - email: string (required, email)
+    //   - role: string (required, 'user' or 'admin')
+    //   - trial_start: timestamp (required)
+    //   - access_granted: boolean (optional)
+    //   - request_pending: boolean (optional)
+    //   - created_at: timestamp (optional)
+    //
+    // Collection: calculations
+    // Document ID: calcId (auto-generated)
+    // Fields:
+    //   - userId: string (required, matches auth.uid)
+    //   - type: string (required, 'beam', 'pillar', 'slab')
+    //   - input_data: map (required)
+    //   - result_data: map (required)
+    //   - created_at: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ((request.auth.token.email == "patricioaug@gmail.com" && request.auth.token.email_verified == true) ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.size() < 256 && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUser(data) {
+      return data.email is string && isValidEmail(data.email) &&
+             data.role is string && data.role in ['user', 'admin'] &&
+             data.trial_start is timestamp;
+    }
+
+    function isValidCalculation(data) {
+      return data.userId is string && data.userId.size() < 128 &&
+             data.userId == request.auth.uid &&
+             data.type is string &&
+             data.type in ['beam', 'pillar', 'slab'] &&
+             data.input_data is map &&
+             data.result_data is map &&
+             data.created_at is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) && request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) && request.resource.data.role == resource.data.role || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /calculations/{calcId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && (isValidCalculation(request.resource.data) || isAdmin());
+      allow update: if isAuthenticated() && (isValidCalculation(request.resource.data) || isAdmin()) && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+  }
+}

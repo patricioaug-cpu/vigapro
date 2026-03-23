@@ -1,13 +1,13 @@
 export interface User {
-  id: number;
   uid: string;
   email: string;
   role: 'admin' | 'user';
-  trial_start: string;
+  trial_start: any;
   access_granted: boolean;
   request_pending?: boolean;
   trial_expired?: boolean;
   server_time?: number;
+  created_at?: any;
 }
 
 export interface BeamInput {
