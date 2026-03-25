@@ -1493,6 +1493,7 @@ export default function App() {
       element.style.boxShadow = 'none';
       element.style.padding = '20px';
       element.style.backgroundColor = '#ffffff';
+      element.style.width = '1200px'; // Force width for consistent capture
 
       // Use modern-screenshot as it handles modern CSS (OKLCH/OKLAB) better than html2canvas
       const canvas = await domToCanvas(element, {
@@ -1510,11 +1511,31 @@ export default function App() {
 
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgProps = pdf.getImageProperties(imgData);
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
       
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10; // 10mm margin
+      
+      const imgProps = pdf.getImageProperties(imgData);
+      
+      // Calculate scaling to fit in one page (considering margins)
+      const maxWidth = pageWidth - (margin * 2);
+      const maxHeight = pageHeight - (margin * 2);
+      
+      const widthRatio = maxWidth / imgProps.width;
+      const heightRatio = maxHeight / imgProps.height;
+      
+      // Use the smaller ratio to ensure it fits both dimensions on a single page
+      const ratio = Math.min(widthRatio, heightRatio);
+      
+      const pdfWidth = imgProps.width * ratio;
+      const pdfHeight = imgProps.height * ratio;
+      
+      // Center the content on the page
+      const x = (pageWidth - pdfWidth) / 2;
+      const y = (pageHeight - pdfHeight) / 2;
+      
+      pdf.addImage(imgData, 'PNG', x, y, pdfWidth, pdfHeight);
       pdf.save(`relatorio-${id.split('-')[1]}.pdf`);
       
       showToast('PDF gerado com sucesso!', 'success');
