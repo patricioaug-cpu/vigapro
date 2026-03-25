@@ -4,6 +4,7 @@ export interface User {
   role: 'admin' | 'user';
   trial_start: any;
   access_granted: boolean;
+  access_revoked?: boolean;
   request_pending?: boolean;
   trial_expired?: boolean;
   server_time?: number;

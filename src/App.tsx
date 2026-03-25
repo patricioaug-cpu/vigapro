@@ -444,6 +444,15 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const getTimestampMillis = (ts: any) => {
+  if (!ts) return Date.now();
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts === 'number') return ts;
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? Date.now() : d.getTime();
+};
+
 const formatDate = (date: any) => {
   if (!date) return '';
   if (typeof date === 'string') return new Date(date).toLocaleDateString();
@@ -978,7 +987,7 @@ const SlabViz = ({ input, result }: { input: any, result: any }) => {
 };
 
 // --- Trial Expired View ---
-const TrialExpiredView = ({ user, onRequestAccess }: { user: User, onRequestAccess: () => void }) => {
+const TrialExpiredView = ({ user, onLogout, onRequestAccess }: { user: User, onLogout: () => void, onRequestAccess: () => void }) => {
   return (
     <div className="min-h-[80vh] flex items-center justify-center p-4">
       <motion.div 
@@ -991,8 +1000,14 @@ const TrialExpiredView = ({ user, onRequestAccess }: { user: User, onRequestAcce
         </div>
         
         <div className="space-y-2">
-          <h2 className="text-3xl font-black text-white tracking-tighter">Trial Expirado</h2>
-          <p className="text-zinc-400">Seu período de teste de 7 dias chegou ao fim. Para continuar utilizando o VigaPro, solicite a liberação do seu acesso.</p>
+          <h2 className="text-3xl font-black text-white tracking-tighter">
+            {user.access_revoked ? 'Acesso Revogado' : 'Trial Expirado'}
+          </h2>
+          <p className="text-zinc-400">
+            {user.access_revoked 
+              ? 'Seu acesso ao sistema foi revogado pelo administrador. Entre em contato para mais informações.' 
+              : 'Seu período de teste de 7 dias chegou ao fim. Para continuar utilizando o VigaPro, solicite a liberação do seu acesso.'}
+          </p>
         </div>
 
           <div className="bg-zinc-800/50 rounded-2xl p-6 border border-zinc-800 space-y-4">
@@ -1006,16 +1021,25 @@ const TrialExpiredView = ({ user, onRequestAccess }: { user: User, onRequestAcce
             </div>
           </div>
 
-        {user.request_pending ? (
-          <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-xl flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
-            <p className="text-sm text-emerald-200 text-left">Sua solicitação já foi enviada e está aguardando análise do administrador.</p>
-          </div>
-        ) : (
-          <Button onClick={onRequestAccess} className="w-full bg-amber-600 hover:bg-amber-500">
-            Solicitar Liberação de Acesso
-          </Button>
-        )}
+        <div className="space-y-3">
+          {user.request_pending ? (
+            <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-xl flex items-center gap-3">
+              <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+              <p className="text-sm text-emerald-200 text-left">Sua solicitação já foi enviada e está aguardando análise do administrador.</p>
+            </div>
+          ) : (
+            <Button onClick={onRequestAccess} className="w-full bg-amber-600 hover:bg-amber-500">
+              Solicitar Liberação de Acesso
+            </Button>
+          )}
+          
+          <button 
+            onClick={onLogout}
+            className="w-full py-4 bg-zinc-800 text-zinc-400 rounded-2xl font-bold uppercase tracking-widest hover:bg-zinc-700 hover:text-white transition-all text-xs"
+          >
+            Sair da Conta
+          </button>
+        </div>
 
         <div className="pt-4">
           <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Suporte: patricioaug@gmail.com</p>
@@ -1073,7 +1097,10 @@ const AdminView = ({ onBack, onGrant, onRevoke, users }: { onBack: () => void, o
                     <p className="text-white font-bold">{u.email}</p>
                     <div className="flex items-center gap-3 mt-1">
                       <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Trial: {formatDate(u.trial_start)}</span>
-                      {isExpired && !u.access_granted && (
+                      {u.access_revoked && (
+                        <span className="text-[10px] bg-red-500/10 text-red-500 px-2 py-0.5 rounded-md font-bold uppercase tracking-widest">Revogado</span>
+                      )}
+                      {isExpired && !u.access_granted && !u.access_revoked && (
                         <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-md font-bold uppercase tracking-widest">Expirado</span>
                       )}
                       {u.request_pending && (
@@ -1126,6 +1153,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const userUnsubscribeRef = useRef<(() => void) | null>(null);
 
   const [input, setInput] = useState<any>({
     lx: '400',
@@ -1172,15 +1200,18 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (userUnsubscribeRef.current) {
+        userUnsubscribeRef.current();
+        userUnsubscribeRef.current = null;
+      }
+
       if (firebaseUser) {
-        try {
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
-          
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        userUnsubscribeRef.current = onSnapshot(userDocRef, async (userDoc) => {
           if (userDoc.exists()) {
             const userData = userDoc.data() as User;
             const now = Date.now();
-            const trialStart = new Date(userData.trial_start).getTime();
+            const trialStart = getTimestampMillis(userData.trial_start);
             const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
             const trialExpired = now > (trialStart + sevenDaysInMs);
             
@@ -1192,13 +1223,17 @@ export default function App() {
             };
             
             setUser(fullUser);
-            if (fullUser.role !== 'admin' && trialExpired && !fullUser.access_granted) {
-              setView('trial_expired');
-            } else if (view === 'login') {
-              setView('menu');
+            if (fullUser.role !== 'admin') {
+              const isBlocked = fullUser.access_revoked || (trialExpired && !fullUser.access_granted);
+              if (isBlocked) {
+                setView('trial_expired');
+              } else {
+                setView(prev => prev === 'login' || prev === 'trial_expired' ? 'menu' : prev);
+              }
+            } else {
+              setView(prev => prev === 'login' ? 'menu' : prev);
             }
           } else {
-            // New user from Google or something
             const newUser: User = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
@@ -1208,20 +1243,22 @@ export default function App() {
               created_at: serverTimestamp()
             };
             await setDoc(userDocRef, newUser);
-            setUser(newUser);
-            setView('menu');
           }
-        } catch (err) {
-          console.error('Auth check failed:', err);
-          showToast('Erro ao verificar autenticação', 'error');
-        }
+          setLoadingAuth(false);
+        }, (err) => {
+          console.error('User doc listener failed:', err);
+          setLoadingAuth(false);
+        });
       } else {
         setUser(null);
         setView('login');
+        setLoadingAuth(false);
       }
-      setLoadingAuth(false);
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (userUnsubscribeRef.current) userUnsubscribeRef.current();
+    };
   }, []);
 
   useEffect(() => {
@@ -1231,7 +1268,7 @@ export default function App() {
         const usersData = snapshot.docs.map(doc => {
           const data = doc.data();
           const now = Date.now();
-          const trialStart = new Date(data.trial_start).getTime();
+          const trialStart = getTimestampMillis(data.trial_start);
           const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
           return {
             ...data,
@@ -1483,9 +1520,10 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'users', userId), {
         access_granted: true,
+        access_revoked: false,
         request_pending: false
       });
-      showToast('Acesso liberado!');
+      showToast('Acesso liberado!', 'success');
     } catch (err: any) {
       showToast('Erro ao liberar acesso.', 'error');
     }
@@ -1494,9 +1532,10 @@ export default function App() {
   const revokeAccess = async (userId: string) => {
     try {
       await updateDoc(doc(db, 'users', userId), {
-        access_granted: false
+        access_granted: false,
+        access_revoked: true
       });
-      showToast('Acesso revogado.');
+      showToast('Acesso revogado!', 'error');
     } catch (err: any) {
       showToast('Erro ao revogar acesso.', 'error');
     }
@@ -1867,7 +1906,7 @@ export default function App() {
             </div>
           ) : view === 'trial_expired' && user ? (
             <motion.div key="trial-view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <TrialExpiredView user={user} onRequestAccess={requestAccess} />
+              <TrialExpiredView user={user} onLogout={logout} onRequestAccess={requestAccess} />
             </motion.div>
           ) : view === 'admin' ? (
             <motion.div key="admin-view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
