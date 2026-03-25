@@ -32,6 +32,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import jsPDF from 'jspdf';
+import { domToCanvas } from 'modern-screenshot';
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -1467,6 +1469,66 @@ export default function App() {
     }
   };
 
+  const handlePrint = async (id: string) => {
+    const element = document.getElementById(id) as HTMLElement;
+    if (!element) return;
+
+    // Check if we are in a mobile/APK environment
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    // If not mobile, try native print first
+    if (!isMobile) {
+      window.print();
+      return;
+    }
+
+    // Fallback for mobile/APK: Generate PDF
+    let originalStyle = '';
+    try {
+      showToast('Gerando PDF para download...', 'success');
+      
+      // Temporarily apply styles for capture
+      originalStyle = element.getAttribute('style') || '';
+      element.style.borderRadius = '0';
+      element.style.boxShadow = 'none';
+      element.style.padding = '20px';
+      element.style.backgroundColor = '#ffffff';
+
+      // Use modern-screenshot as it handles modern CSS (OKLCH/OKLAB) better than html2canvas
+      const canvas = await domToCanvas(element, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        width: 1200,
+        filter: (node) => {
+          // Filter out elements that shouldn't be in the PDF
+          if (node instanceof HTMLElement && node.classList.contains('print:hidden')) {
+            return false;
+          }
+          return true;
+        }
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`relatorio-${id.split('-')[1]}.pdf`);
+      
+      showToast('PDF gerado com sucesso!', 'success');
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      showToast('Erro ao gerar PDF. Tente novamente.', 'error');
+    } finally {
+      // Restore original styles
+      if (element) {
+        element.setAttribute('style', originalStyle);
+      }
+    }
+  };
+
   const requestAccess = async () => {
     if (!user?.uid) return;
     try {
@@ -2412,16 +2474,10 @@ export default function App() {
                       <X className="w-3 h-3" /> Fechar Relatório
                     </button>
                     <button 
-                      onClick={() => window.print()} 
+                      onClick={() => handlePrint('report-beam')} 
                       className="text-zinc-600 hover:text-black flex items-center gap-2 px-3 py-2 border border-zinc-200 rounded-lg bg-zinc-50/50 transition-colors"
                     >
-                      <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
-                    </button>
-                    <button 
-                      onClick={() => handleShareReport('beam', input, result, 'link')} 
-                      className="text-emerald-600 hover:text-emerald-700 flex items-center gap-2 px-3 py-2 border border-emerald-100 rounded-lg bg-emerald-50/50 transition-colors"
-                    >
-                      <Link className="w-3 h-3" /> Copiar Link
+                      <FileText className="w-3 h-3" /> Imprimir / Gerar PDF
                     </button>
                     <button 
                       onClick={() => handleShareReport('beam', input, result, 'text')} 
@@ -2511,16 +2567,10 @@ export default function App() {
                       <X className="w-3 h-3" /> Fechar Relatório
                     </button>
                     <button 
-                      onClick={() => window.print()} 
+                      onClick={() => handlePrint('report-pillar')} 
                       className="text-zinc-600 hover:text-black flex items-center gap-2 px-3 py-2 border border-zinc-200 rounded-lg bg-zinc-50/50 transition-colors"
                     >
-                      <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
-                    </button>
-                    <button 
-                      onClick={() => handleShareReport('pillar', pillarInput, pillarResult, 'link')} 
-                      className="text-blue-600 hover:text-blue-700 flex items-center gap-2 px-3 py-2 border border-blue-100 rounded-lg bg-blue-50/50 transition-colors"
-                    >
-                      <Link className="w-3 h-3" /> Copiar Link
+                      <FileText className="w-3 h-3" /> Imprimir / Gerar PDF
                     </button>
                     <button 
                       onClick={() => handleShareReport('pillar', pillarInput, pillarResult, 'text')} 
@@ -2612,16 +2662,10 @@ export default function App() {
                       <X className="w-3 h-3" /> Fechar Relatório
                     </button>
                     <button 
-                      onClick={() => window.print()} 
+                      onClick={() => handlePrint('report-slab')} 
                       className="text-zinc-600 hover:text-black flex items-center gap-2 px-3 py-2 border border-zinc-200 rounded-lg bg-zinc-50/50 transition-colors"
                     >
-                      <FileText className="w-3 h-3" /> Imprimir Relatório (Recurso Nativo do Navegador)
-                    </button>
-                    <button 
-                      onClick={() => handleShareReport('slab', slabInput, slabResult, 'link')} 
-                      className="text-amber-600 hover:text-amber-700 flex items-center gap-2 px-3 py-2 border border-amber-100 rounded-lg bg-amber-50/50 transition-colors"
-                    >
-                      <Link className="w-3 h-3" /> Copiar Link
+                      <FileText className="w-3 h-3" /> Imprimir / Gerar PDF
                     </button>
                     <button 
                       onClick={() => handleShareReport('slab', slabInput, slabResult, 'text')} 
