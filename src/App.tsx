@@ -33,7 +33,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import jsPDF from 'jspdf';
-import { domToCanvas } from 'modern-screenshot';
+import { domToJpeg } from 'modern-screenshot';
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -1495,9 +1495,13 @@ export default function App() {
       element.style.backgroundColor = '#ffffff';
       element.style.width = '1200px'; // Force width for consistent capture
 
-      // Use modern-screenshot as it handles modern CSS (OKLCH/OKLAB) better than html2canvas
-      const canvas = await domToCanvas(element, {
-        scale: 2,
+      // Small delay to ensure styles are applied before capture
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Use modern-screenshot with JPEG format and lower scale for mobile memory efficiency
+      const imgData = await domToJpeg(element, {
+        quality: 0.8,
+        scale: 1.5, // Reduced scale for better memory management on mobile
         backgroundColor: '#ffffff',
         width: 1200,
         filter: (node) => {
@@ -1509,7 +1513,6 @@ export default function App() {
         }
       });
 
-      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
       
       const pageWidth = pdf.internal.pageSize.getWidth();
@@ -1535,7 +1538,7 @@ export default function App() {
       const x = (pageWidth - pdfWidth) / 2;
       const y = (pageHeight - pdfHeight) / 2;
       
-      pdf.addImage(imgData, 'PNG', x, y, pdfWidth, pdfHeight);
+      pdf.addImage(imgData, 'JPEG', x, y, pdfWidth, pdfHeight, undefined, 'FAST');
       pdf.save(`relatorio-${id.split('-')[1]}.pdf`);
       
       showToast('PDF gerado com sucesso!', 'success');
