@@ -50,7 +50,8 @@ import {
   onAuthStateChanged, 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  deleteUser
 } from 'firebase/auth';
 import { 
   doc, 
@@ -63,7 +64,8 @@ import {
   where, 
   onSnapshot,
   serverTimestamp,
-  addDoc
+  addDoc,
+  deleteDoc
 } from 'firebase/firestore';
 
 import { User, BeamInput, BeamResult, PillarInput, SlabInput, SlabResult } from './types';
@@ -1144,6 +1146,10 @@ export default function App() {
   const [showReport, setShowReport] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
+  const [showTermsOfUse, setShowTermsOfUse] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [serverTime, setServerTime] = useState<number>(Date.now());
@@ -1387,6 +1393,37 @@ export default function App() {
       showToast('Sessão encerrada.');
     } catch (err) {
       showToast('Erro ao encerrar sessão.', 'error');
+    }
+  };
+
+  const deleteAccount = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+    
+    setLoadingAuth(true);
+    try {
+      // 1. Delete user document from Firestore
+      await deleteDoc(doc(db, 'users', currentUser.uid));
+      
+      // 2. Delete auth user from Firebase Auth
+      await deleteUser(currentUser);
+      
+      showToast('Sua conta e seus dados foram excluídos.', 'success');
+      setUser(null);
+      setView('login');
+      setShowAccountSettings(false);
+    } catch (err: any) {
+      console.error("Erro ao excluir conta:", err);
+      if (err.code === 'auth/requires-recent-login') {
+        const errorMsg = 'Para sua segurança, esta ação requer reautenticação. Por favor, saia da conta, faça o login novamente e tente excluir em seguida.';
+        setAuthError(errorMsg);
+        showToast('Saia e faça login de novo para excluir.', 'error');
+      } else {
+        setAuthError('Ocorreu um erro ao excluir sua conta: ' + (err.message || err));
+        showToast('Erro ao excluir conta.', 'error');
+      }
+    } finally {
+      setLoadingAuth(false);
     }
   };
 
@@ -1767,6 +1804,16 @@ export default function App() {
               >
                 <Crown className="w-4 h-4" />
                 Painel de Controle
+              </button>
+            )}
+            {user && (
+              <button 
+                key="account-btn" 
+                onClick={() => setShowAccountSettings(true)} 
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-colors font-medium text-xs hover:bg-zinc-800"
+              >
+                <UserIcon className="w-3.5 h-3.5 text-emerald-500" />
+                <span className="hidden sm:inline">{user.email ? user.email.split('@')[0] : 'Minha Conta'}</span>
               </button>
             )}
             <button key="help-btn" onClick={() => setShowHelp(true)} className="p-2 text-zinc-400 hover:text-white transition-colors">
@@ -2731,14 +2778,45 @@ export default function App() {
                   )}
 
                   {authMode === 'register' && (
-                    <Button 
-                      onClick={() => register(loginEmail)} 
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
-                      disabled={loadingAuth || !loginEmail || !loginEmail.includes('@') || !loginPassword || loginPassword.length < 6}
-                      type="button"
-                    >
-                      {loadingAuth ? 'Criando conta...' : 'Criar Minha Conta'}
-                    </Button>
+                    <div className="space-y-4">
+                      <div className="flex items-start gap-3 p-1">
+                        <input 
+                          type="checkbox" 
+                          id="accept-terms-checkbox"
+                          checked={acceptTerms}
+                          onChange={(e) => setAcceptTerms(e.target.checked)}
+                          className="mt-1 accent-emerald-500 rounded border-zinc-700 bg-zinc-800 text-emerald-500 focus:ring-emerald-500 focus:outline-none shrink-0"
+                        />
+                        <label htmlFor="accept-terms-checkbox" className="text-xs text-zinc-400 select-none leading-relaxed">
+                          Li e aceito a{' '}
+                          <button 
+                            type="button" 
+                            onClick={() => setShowPrivacyPolicy(true)} 
+                            className="text-emerald-500 hover:underline font-bold focus:outline-none"
+                          >
+                            Política de Privacidade
+                          </button>{' '}
+                          e os{' '}
+                          <button 
+                            type="button" 
+                            onClick={() => setShowTermsOfUse(true)} 
+                            className="text-emerald-500 hover:underline font-bold focus:outline-none"
+                          >
+                            Termos de Uso
+                          </button>{' '}
+                          do VigaPro.
+                        </label>
+                      </div>
+
+                      <Button 
+                        onClick={() => register(loginEmail)} 
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 h-12"
+                        disabled={loadingAuth || !loginEmail || !loginEmail.includes('@') || !loginPassword || loginPassword.length < 6 || !acceptTerms}
+                        type="button"
+                      >
+                        {loadingAuth ? 'Criando conta...' : 'Criar Minha Conta'}
+                      </Button>
+                    </div>
                   )}
 
                   {authMode === 'forgot' && (
@@ -2804,8 +2882,25 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="text-center">
+                <div className="text-center space-y-3">
                   <p className="text-[10px] text-zinc-600 uppercase font-bold tracking-widest">VigaPro Structural Engine v1.0</p>
+                  <div className="flex justify-center gap-4 text-[11px] text-zinc-500 font-medium">
+                    <button 
+                      type="button" 
+                      onClick={() => setShowPrivacyPolicy(true)} 
+                      className="hover:text-emerald-500 transition-colors focus:outline-none cursor-pointer"
+                    >
+                      Política de Privacidade
+                    </button>
+                    <span className="text-zinc-800">•</span>
+                    <button 
+                      type="button" 
+                      onClick={() => setShowTermsOfUse(true)} 
+                      className="hover:text-emerald-500 transition-colors focus:outline-none cursor-pointer"
+                    >
+                      Termos de Uso
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             </div>
@@ -2822,8 +2917,22 @@ export default function App() {
           </div>
           <div className="flex items-center gap-6 text-xs font-medium text-zinc-500">
             <button 
+              type="button"
+              onClick={() => setShowPrivacyPolicy(true)} 
+              className="hover:text-zinc-300 transition-colors cursor-pointer"
+            >
+              Política de Privacidade
+            </button>
+            <button 
+              type="button"
+              onClick={() => setShowTermsOfUse(true)} 
+              className="hover:text-zinc-300 transition-colors cursor-pointer"
+            >
+              Termos de Uso
+            </button>
+            <button 
               onClick={() => setShowSupport(true)}
-              className="flex items-center gap-2 text-emerald-500 hover:text-emerald-400 transition-colors"
+              className="flex items-center gap-2 text-emerald-500 hover:text-emerald-400 transition-colors font-semibold"
             >
               <Mail className="w-3.5 h-3.5" />
               Suporte Técnico
@@ -2882,6 +2991,281 @@ export default function App() {
               </div>
 
               <Button onClick={() => setShowSupport(false)} variant="outline" className="w-full">Fechar</Button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Account Settings / Profile Modal */}
+      <AnimatePresence>
+        {showAccountSettings && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAccountSettings(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl space-y-6"
+            >
+              <div className="flex justify-between items-start">
+                <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center">
+                  <UserIcon className="w-6 h-6 text-emerald-500" />
+                </div>
+                <button onClick={() => setShowAccountSettings(false)} className="text-zinc-500 hover:text-white transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="text-xl font-bold text-white">Configurações da Conta</h3>
+                <p className="text-xs text-zinc-400">Gerencie seus detalhes cadastrais e privacidade.</p>
+              </div>
+
+              <div className="space-y-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800">
+                <div className="flex justify-between text-xs">
+                  <span className="text-zinc-500">E-mail:</span>
+                  <span className="text-white font-medium">{user?.email}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-zinc-500">Nível de Acesso:</span>
+                  <span className="text-emerald-500 font-medium font-mono uppercase text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                    {user?.role === 'admin' ? 'Administrador' : 'Usuário Profissional'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-zinc-500">Status da Licença:</span>
+                  <span className="text-blue-400 font-medium text-[10px] bg-blue-500/10 px-2 py-0.5 rounded-full">
+                    {user?.access_granted ? 'Acesso Liberado' : 'Período Trial Ativo'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Account Deletion Area */}
+              <div className="border-t border-zinc-800 pt-4 space-y-4">
+                <div className="space-y-1">
+                  <h4 className="text-xs font-bold text-red-500 uppercase tracking-widest flex items-center gap-1">
+                    <Trash2 className="w-3.5 h-3.5" /> Exclusão de Dados (LGPD)
+                  </h4>
+                  <p className="text-[11px] text-zinc-500 leading-normal">
+                    Você pode revogar seus consentimentos e excluir sua conta permanentemente junto com todos os cálculos associados a qualquer momento.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-red-500/5 rounded-2xl border border-red-500/10 space-y-3">
+                  <p className="text-[11px] text-red-400/95 font-medium leading-normal">
+                    Aviso: Esta ação é definitiva e removerá seu UID de nossa base de dados Firestore e autenticação de forma síncrona.
+                  </p>
+
+                  <button
+                    onClick={() => {
+                      if (window.confirm("Aviso de Exclusão Definitiva:\n\nVocê tem certeza que deseja deletar permanentemente sua conta, seu e-mail e todos os seus cálculos no VigaPro? Esta ação não pode ser desfeita.")) {
+                        deleteAccount();
+                      }
+                    }}
+                    className="w-full py-2.5 bg-red-600/10 hover:bg-red-600 hover:text-white text-red-500 rounded-xl text-xs font-bold uppercase tracking-wider transition-all border border-red-500/20 shadow-sm font-semibold"
+                  >
+                    Excluir Minha Conta e Dados
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button 
+                  onClick={async () => {
+                    await logout();
+                    setShowAccountSettings(false);
+                  }} 
+                  className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold border border-zinc-700 flex items-center justify-center gap-2"
+                >
+                  <LogOut className="w-4 h-4 text-zinc-400" /> Sair da Conta
+                </Button>
+                <Button onClick={() => setShowAccountSettings(false)} variant="outline" className="flex-1">
+                  Fechar
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Privacy Policy Modal */}
+      <AnimatePresence>
+        {showPrivacyPolicy && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPrivacyPolicy(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl flex flex-col max-h-[85vh]"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-zinc-800 mb-6 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center">
+                    <ShieldCheck className="w-5 h-5 text-emerald-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Política de Privacidade</h3>
+                    <p className="text-[10px] text-emerald-500 uppercase tracking-widest font-bold">VigaPro Structural Engine</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowPrivacyPolicy(false)} className="text-zinc-500 hover:text-white transition-colors p-1.5 hover:bg-zinc-800 rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto space-y-6 text-sm text-zinc-300 pr-2 leading-relaxed custom-scrollbar max-h-[50vh]">
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">1. Introdução</h4>
+                  <p className="text-zinc-400">
+                    Nós do VigaPro priorizamos a segurança de seus dados e o respeito à sua privacidade. Esta política descreve como tratamos as informações pessoais coletadas quando você utiliza nossa ferramenta móvel e web para dimensionamento e simplificação de elementos estruturais.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">2. Coleta de Informações</h4>
+                  <p className="text-zinc-400">
+                    Para habilitar o controle de trial gratuito de 7 dias e as funcionalidades integradas de salvamento em nuvem, coletamos os seguintes dados do usuário:
+                  </p>
+                  <ul className="list-disc pl-5 text-zinc-400 space-y-1">
+                    <li>Endereço de e-mail fornecido voluntariamente no cadastro;</li>
+                    <li>Identificador único (UID) gerado pelo Firebase Authentication;</li>
+                    <li>Metadados sobre cálculos estruturais de vigas, pilares e lajes enviados à nossa base de dados;</li>
+                    <li>Carimbos de data/hora referentes à criação da conta e logins.</li>
+                  </ul>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">3. Uso dos Seus Dados</h4>
+                  <p className="text-zinc-400">
+                    Os dados coletados são utilizados unicamente para:
+                  </p>
+                  <ul className="list-disc pl-5 text-zinc-400 space-y-1">
+                    <li>Garantir e monitorar a vigência dos 7 dias do Trial Estrutural;</li>
+                    <li>Sincronizar de forma segura os seus cálculos para que suas informações não se percam;</li>
+                    <li>Autenticação de forma confiável no servidor mantendo a integridade técnica da plataforma;</li>
+                    <li>Prevenir fraudes e usos indevidos dos recursos computacionais.</li>
+                  </ul>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">4. Armazenamento e Exclusão Segura</h4>
+                  <p className="text-zinc-400">
+                    De acordo com as normas da LGPD (Lei Geral de Proteção de Dados) e do GDPR, garantimos o direito total de apagamento de dados (direito ao esquecimento). Você poderá excluir sua conta e todas as informações vinculadas instantaneamente através do menu de configurações "Minha Conta", de forma autônoma e definitiva.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">5. Proteção de Dados</h4>
+                  <p className="text-zinc-400">
+                    Os dados são processados e protegidos por meio de infraestrutura líder fornecida pela Google Cloud (Firebase Firestore e Firebase Authentication), amparada por regras de segurança avançadas contra acessos não autorizados. No entanto, lembre-se de que nenhum método em rede é 100% impenetrável.
+                  </p>
+                </section>
+
+                <section className="space-y-2 pb-4">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">6. Contatos e Dúvidas</h4>
+                  <p className="text-zinc-400">
+                    Se você tiver solicitações de privacidade ou dúvidas gerais, sinta-se à vontade para enviar um e-mail ao nosso Encarregado pelo Tratamento de Dados (DPO) através do canal oficial: <strong className="text-white">patricioaug@gmail.com</strong>.
+                  </p>
+                </section>
+              </div>
+
+              <div className="pt-4 border-t border-zinc-800 mt-6 flex justify-end shrink-0">
+                <Button onClick={() => setShowPrivacyPolicy(false)} className="bg-emerald-600 hover:bg-emerald-500 px-6">
+                  Entendi
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Terms of Use Modal */}
+      <AnimatePresence>
+        {showTermsOfUse && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowTermsOfUse(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl flex flex-col max-h-[85vh]"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-zinc-800 mb-6 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center">
+                    <Info className="w-5 h-5 text-emerald-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Termos de Uso</h3>
+                    <p className="text-[10px] text-emerald-500 uppercase tracking-widest font-bold">VigaPro Structural Engine</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowTermsOfUse(false)} className="text-zinc-500 hover:text-white transition-colors p-1.5 hover:bg-zinc-800 rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto space-y-6 text-sm text-zinc-300 pr-2 leading-relaxed custom-scrollbar max-h-[50vh]">
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">1. Aceitação dos Termos</h4>
+                  <p className="text-zinc-400">
+                    Ao criar uma conta ou utilizar os serviços do VigaPro, você concorda expressamente em estar vinculado a estes termos legais. Se não concordar com qualquer ponto disposto, por favor, encerre o uso imediato e efetue a autoexclusão de sua conta.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">2. Escopo Científico e Isenção de Responsabilidade</h4>
+                  <p className="text-zinc-400">
+                    O VigaPro é uma plataforma voltada a fins exclusivamente educativos e de pré-dimensionamento rápido. Os resultados e modelos tridimensionais gerados pela ferramenta não dispensam nem substituem o projeto executivo e detalhamento oficial, que é de encargo obrigatório de profissionais devidamente habilitados perante os órgãos reguladores competentes (CREA / CAU). O desenvolvedor não se responsabiliza por decisões estruturais tomadas com base nas saídas automatizadas deste software.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">3. Regras de Trial e Validação de Acesso</h4>
+                  <p className="text-zinc-400">
+                    Cada cadastro recebe um período de experimentação (Trial) gratuito de 7 dias contados a partir da criação e primeiro login na nuvem. Após vencido ou revogado este período, o VigaPro reserva o direito de bloquear recursos de cálculo pendentes de aprovação pelo Administrador do ecossistema.
+                  </p>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">4. Propriedade Intelectual</h4>
+                  <p className="text-zinc-400">
+                    Toda a lógica de renderização 3D baseada em Three.js, os scripts matemáticos estruturais e os elementos visuais são propriedade exclusiva do VigaPro, sendo vedada qualquer tentativa de engenharia reversa sob amparo de legislação internacional de copyright.
+                  </p>
+                </section>
+
+                <section className="space-y-2 pb-4">
+                  <h4 className="text-white font-bold text-base flex items-center gap-2">5. Modificações Gerais</h4>
+                  <p className="text-zinc-400">
+                    Reservamo-nos o direito de alterar as fórmulas e layouts para aperfeiçoamentos técnicos a qualquer tempo, atualizando nossa documentação e canais transparentemente.
+                  </p>
+                </section>
+              </div>
+
+              <div className="pt-4 border-t border-zinc-800 mt-6 flex justify-end shrink-0">
+                <Button onClick={() => setShowTermsOfUse(false)} className="bg-emerald-600 hover:bg-emerald-500 px-6">
+                  Entendi
+                </Button>
+              </div>
             </motion.div>
           </div>
         )}
